@@ -360,7 +360,7 @@ class SearcherInternal {
                 filterValue = filterConfig.defaultValue;
             }
 
-            if (filterValue) {
+            if (filterValue && filterValue !== '__all__') {
                 const filterType = filterValue.type;
                 if (filterValue.values && filterType) {
                     filterValue = filterValue.values;
@@ -527,7 +527,8 @@ class SearcherInternal {
         if (facetConfig.type === 'field') {
             facetValue = {
                 terms: {
-                    field: facetConfig.field
+                    field: facetConfig.field,
+                    size: 0
                 }
             };
         } else if (facetConfig.type === 'ranges') {
