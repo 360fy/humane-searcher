@@ -5,13 +5,13 @@ import md5 from 'md5';
 import performanceNow from 'performance-now';
 
 import buildRedisClient from 'humane-node-commons/lib/RedisClient';
-import buildRequest from 'humane-node-commons/lib/Request';
+import * as Request from 'humane-node-commons/lib/Request';
 
 import InternalServiceError from 'humane-node-commons/lib/InternalServiceError';
 
 export default class ESClient {
     constructor(config) {
-        this.request = buildRequest(_.extend({}, config.esConfig, {logLevel: config.logLevel, baseUrl: config.esConfig && config.esConfig.url || 'http://localhost:9200'}));
+        this.request = Request.builder(_.extend({}, config.esConfig, {logLevel: config.logLevel, baseUrl: config.esConfig && config.esConfig.url || 'http://localhost:9200'}));
 
         this.redisKeyPrefix = process.env.REDIS_KEY_PREFIX;
         if (this.redisKeyPrefix) {
@@ -58,20 +58,20 @@ export default class ESClient {
           }); // eat the error
     }
 
-    static processResponse(response) {
-        let _response = response;
-        if (_.isArray(_response)) {
-            _response = response[0];
-        }
-
-        if (_response.statusCode < 400) {
-            return _response.body;
-        }
-
-        // console.error('Error: ', _response.body);
-
-        throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: _response.body && _response.body.error || _response.body});
-    }
+    // static processResponse(response) {
+    //     let _response = response;
+    //     if (_.isArray(_response)) {
+    //         _response = response[0];
+    //     }
+    //
+    //     if (_response.statusCode < 400) {
+    //         return _response.body;
+    //     }
+    //
+    //     // console.error('Error: ', _response.body);
+    //
+    //     throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: _response.body && _response.body.error || _response.body});
+    // }
 
     // queries will be in following format:
     //      index or indices
@@ -145,7 +145,7 @@ export default class ESClient {
                     }
 
                     return this.request({method: 'POST', uri, body: query.search})
-                      .then(ESClient.processResponse)
+                      .then((response) => Request.handleResponse(response))
                       .then(queryResponse => {
                           if (queryResponse) {
                               return this.storeInCache(cacheKey, queryResponse);
@@ -166,7 +166,8 @@ export default class ESClient {
 
         //console.log('Explain: ', uri, JSON.stringify(query.search));
 
-        return this.request({method: 'POST', uri, body: query.search}).then(ESClient.processResponse)
+        return this.request({method: 'POST', uri, body: query.search})
+          .then((response) => Request.handleResponse(response))
           .catch(error => {
               throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
           });
@@ -190,7 +191,7 @@ export default class ESClient {
               }
 
               return this.request({method: 'GET', uri})
-                .then(ESClient.processResponse)
+                .then((response) => Request.handleResponse(response))
                 .then(getResponse => {
                     if (getResponse) {
                         return this.storeInCache(cacheKey, getResponse);
@@ -207,7 +208,8 @@ export default class ESClient {
     termVectors(index, type, id) {
         const uri = `/${index}/${type}/${id}/_termvectors?fields=*`;
 
-        return this.request({method: 'GET', uri}).then(ESClient.processResponse)
+        return this.request({method: 'GET', uri})
+          .then((response) => Request.handleResponse(response))
           .catch(error => {
               throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
           });
@@ -216,7 +218,8 @@ export default class ESClient {
     didYouMean(index, query) {
         const uri = `/${index}/_didYouMean?q=${query}`;
 
-        return this.request({method: 'GET', uri}).then(ESClient.processResponse)
+        return this.request({method: 'GET', uri})
+          .then((response) => Request.handleResponse(response))
           .catch(error => {
               throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
           });
@@ -253,7 +256,7 @@ export default class ESClient {
                     }
 
                     return this.request({method: 'POST', uri, body: bulkQuery, json: false})
-                      .then(ESClient.processResponse)
+                      .then((response) => Request.handleResponse(response))
                       .then(response => {
                           if (!_.isUndefined(response) && !_.isNull(response) && _.isString(response)) {
                               return JSON.parse(response);
