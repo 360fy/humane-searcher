@@ -16,11 +16,11 @@ export default class SearchEventHandler {
         //     uri: '/searchQuery'
         // }));
 
-        this.request = Request.builder({baseUrl: url, method: 'POST', uri: '/searchQuery'});
+        this.request = Request.builder({baseUrl: url, method: 'POST', uri: '/upsert'});
     }
 
     send(data) {
-        this.request({body: {doc: data, signal: {name: 'hit'}}})
+        this.request({body: {type: 'searchQuery', doc: data, signal: {name: 'hit'}}})
           .then(response => Request.handleResponse(response))
           // .then(response => {
           //     if (_.isArray(response)) {

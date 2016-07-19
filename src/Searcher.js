@@ -107,7 +107,7 @@ class SearcherInternal {
 
         this.eventEmitter = new EventEmitter();
 
-        this.registerEventHandlers(DefaultEventHandlers);
+        // this.registerEventHandlers(DefaultEventHandlers);
         this.registerEventHandlers(config.searchConfig.eventHandlers);
 
         // console.log('Final search config for instance: ', this.instanceName, JSON.stringify(this.searchConfig, null, 2));
