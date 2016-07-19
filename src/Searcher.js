@@ -1068,7 +1068,7 @@ class SearcherInternal {
             results: []
         };
 
-        console.log('=======> View: ', JSON.stringify(indexTypeConfig));
+        // console.log('=======> View: ', JSON.stringify(indexTypeConfig));
 
         return this.esClient.allPages(indexTypeConfig.index, indexTypeConfig.type, query, 100,
           (response) => {
@@ -1094,10 +1094,11 @@ export default class Searcher {
         this.internal = new SearcherInternal(searchConfig);
     }
 
-    errorWrap(promise) {
+    errorWrap(method, request, promise) {
         return Promise.resolve(promise)
           .catch(error => {
-              console.error('>>> Error', error, error.stack);
+              console.error('>>> Error', method, request, error, error.stack);
+              
               if (error && (error._errorCode === 'VALIDATION_ERROR' || error._errorCode === 'INTERNAL_SERVICE_ERROR')) {
                   // rethrow same error
                   throw error;
@@ -1108,47 +1109,47 @@ export default class Searcher {
     }
 
     get(headers, request) {
-        return this.errorWrap(this.internal.get(headers, request));
+        return this.errorWrap('get', request, this.internal.get(headers, request));
     }
 
     search(headers, request) {
-        return this.errorWrap(this.internal.search(headers, request));
+        return this.errorWrap('search', request, this.internal.search(headers, request));
     }
 
     formSearch(headers, request) {
-        return this.errorWrap(this.internal.formSearch(headers, request));
+        return this.errorWrap('formSearch', request, this.internal.formSearch(headers, request));
     }
 
     browseAll(headers, request) {
-        return this.errorWrap(this.internal.browseAll(headers, request));
+        return this.errorWrap('browseAll', request, this.internal.browseAll(headers, request));
     }
 
     autocomplete(headers, request) {
-        return this.errorWrap(this.internal.autocomplete(headers, request));
+        return this.errorWrap('autocomplete', request, this.internal.autocomplete(headers, request));
     }
 
     suggestedQueries(headers, request) {
-        return this.errorWrap(this.internal.suggestedQueries(headers, request));
+        return this.errorWrap('suggestedQueries', request, this.internal.suggestedQueries(headers, request));
     }
 
     explainAutocomplete(headers, request) {
-        return this.errorWrap(this.internal.explainAutocomplete(headers, request));
+        return this.errorWrap('explainAutocomplete', request, this.internal.explainAutocomplete(headers, request));
     }
 
     explainSearch(headers, request) {
-        return this.errorWrap(this.internal.explainSearch(headers, request));
+        return this.errorWrap('explainSearch', request, this.internal.explainSearch(headers, request));
     }
 
     termVectors(headers, request) {
-        return this.errorWrap(this.internal.termVectors(headers, request));
+        return this.errorWrap('termVectors', request, this.internal.termVectors(headers, request));
     }
 
     didYouMean(headers, request) {
-        return this.errorWrap(this.internal.didYouMean(headers, request));
+        return this.errorWrap('didYouMean', request, this.internal.didYouMean(headers, request));
     }
 
     view(headers, request) {
-        return this.errorWrap(this.internal.view(headers, request));
+        return this.errorWrap('view', request, this.internal.view(headers, request));
     }
 
     registry() {
