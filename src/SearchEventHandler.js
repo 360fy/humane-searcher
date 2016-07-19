@@ -1,6 +1,6 @@
 // jscs:disable requireCamelCaseOrUpperCaseIdentifiers
 import _ from 'lodash';
-import buildRequest from 'humane-node-commons/lib/Request';
+import * as Request from 'humane-node-commons/lib/Request';
 import md5 from 'md5';
 
 export default class SearchEventHandler {
@@ -16,21 +16,22 @@ export default class SearchEventHandler {
         //     uri: '/searchQuery'
         // }));
 
-        this.request = buildRequest({baseUrl: url, method: 'POST', uri: '/searchQuery'});
+        this.request = Request.builder({baseUrl: url, method: 'POST', uri: '/searchQuery'});
     }
 
     send(data) {
         this.request({body: {doc: data, signal: {name: 'hit'}}})
-          .then(response => {
-              if (_.isArray(response)) {
-                  response = response[0];
-              }
-
-              const result = response.statusCode === 200 ? response.body : null;
-              if (!result) {
-                  console.warn('Error while sending search query: ', response.statusCode, response.body);
-              }
-          })
+          .then(response => Request.handleResponse(response))
+          // .then(response => {
+          //     if (_.isArray(response)) {
+          //         response = response[0];
+          //     }
+          //
+          //     const result = response.statusCode === 200 ? response.body : null;
+          //     if (!result) {
+          //         console.warn('Error while sending search query: ', response.statusCode, response.body);
+          //     }
+          // })
           .catch(error => {
               console.warn('Error while sending search query: ', error);
           });
