@@ -58,20 +58,20 @@ export default class ESClient {
           }); // eat the error
     }
 
-    // static processResponse(response) {
-    //     let _response = response;
-    //     if (_.isArray(_response)) {
-    //         _response = response[0];
-    //     }
-    //
-    //     if (_response.statusCode < 400) {
-    //         return _response.body;
-    //     }
-    //
-    //     // console.error('Error: ', _response.body);
-    //
-    //     throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: _response.body && _response.body.error || _response.body});
-    // }
+    static processResponse(response) {
+        let _response = response;
+        if (_.isArray(_response)) {
+            _response = response[0];
+        }
+
+        if (_response.statusCode < 400) {
+            return _response.body;
+        }
+
+        // console.error('Error: ', _response.body);
+
+        throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: _response.body && _response.body.error || _response.body});
+    }
 
     // queries will be in following format:
     //      index or indices
@@ -256,7 +256,7 @@ export default class ESClient {
                     }
 
                     return this.request({method: 'POST', uri, body: bulkQuery, json: false})
-                      .then((response) => Request.handleResponse(response))
+                      .then(ESClient.processResponse)
                       .then(response => {
                           if (!_.isUndefined(response) && !_.isNull(response) && _.isString(response)) {
                               return JSON.parse(response);
