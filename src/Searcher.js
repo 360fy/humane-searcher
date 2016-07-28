@@ -238,6 +238,35 @@ class SearcherInternal {
         };
     }
 
+    boolShouldQueries(queryArray) {
+        if (queryArray.length === 0) {
+            return null;
+        }
+
+        if (queryArray.length === 1) {
+            return queryArray[0];
+        }
+
+        return {
+            bool: {
+                should: queryArray,
+                minimum_should_match: 1
+            }
+        };
+    }
+
+    missingQuery(field) {
+        return {
+            bool: {
+                must_not: {
+                    exists: {
+                        field
+                    }
+                }
+            }
+        };
+    }
+
     buildFieldQuery(fieldConfig, englishTerm, queries) {
         let query = null;
 
@@ -248,6 +277,10 @@ class SearcherInternal {
         }
 
         query = this.wrapQuery(fieldConfig, query);
+
+        if (fieldConfig.termQuery && fieldConfig.filter) {
+            query = this.boolShouldQueries([query, this.wrapQuery(fieldConfig, this.missingQuery(fieldConfig.field))]);
+        }
 
         if (queries) {
             if (_.isArray(query)) {
@@ -337,7 +370,7 @@ class SearcherInternal {
         };
     }
 
-    filterPart(searchTypeConfig, input, termLanguages, facetFilter) {
+    filterQueries(searchTypeConfig, input, termLanguages) {
         const filterConfigs = searchTypeConfig.filters || searchTypeConfig.indexType.filters;
 
         if (!filterConfigs) {
@@ -366,8 +399,7 @@ class SearcherInternal {
                     filterValue = filterValue.values;
                 }
 
-                if (facetFilter && (!filterType || filterType !== 'facet')
-                  || !facetFilter && filterType && filterType === 'facet') {
+                if (filterType && filterType === 'facet') {
                     return true;
                 }
 
@@ -400,6 +432,106 @@ class SearcherInternal {
         return {
             and: {
                 filters: _.map(filterQueries, filter => ({query: filter}))
+            }
+        };
+    }
+
+    facetQueries(searchTypeConfig, input) {
+        const facetConfigs = searchTypeConfig.facets || searchTypeConfig.indexType.facets;
+
+        if (!facetConfigs) {
+            return undefined;
+        }
+
+        const facetQueries = [];
+
+        _.forEach(facetConfigs, (facetConfig) => {
+            const facetConfigKey = facetConfig.key;
+            let filterValue = null;
+
+            if (input.filter && input.filter[facetConfigKey]) {
+                filterValue = input.filter[facetConfigKey];
+            }
+
+            if (filterValue && filterValue !== '__all__') {
+                const filterType = filterValue.type;
+                if (filterValue.values && filterType) {
+                    filterValue = filterValue.values;
+                }
+
+                if (!filterType || filterType !== 'facet') {
+                    return true;
+                }
+
+                if (facetConfig.type === 'field') {
+                    // form field query here - termQuery, nestedPath, field
+                    this.buildFieldQuery({filter: true, termQuery: true, field: facetConfig.field, nestedPath: facetConfig.nestedPath}, filterValue, facetQueries);
+                } else if (facetConfig.type === 'filters') {
+                    // find matching filter and form appropriate query here
+                    const matchingFilterQueries = [];
+                    if (!_.isArray(filterValue)) {
+                        filterValue = [filterValue];
+                    }
+
+                    _.forEach(filterValue, oneValue => {
+                        _.forEach(facetConfig.filters, filterFacetConfig => {
+                            if (oneValue === filterFacetConfig.key) {
+                                matchingFilterQueries.push(filterFacetConfig.filter);
+                            }
+                        });
+                    });
+
+                    const query = this.boolShouldQueries(matchingFilterQueries);
+                    if (query) {
+                        facetQueries.push(query);
+                    }
+                } else if (facetConfig.type === 'ranges') {
+                    // find matching range and form range query here
+                    const matchingRangeQueries = [];
+                    if (!_.isArray(filterValue)) {
+                        filterValue = [filterValue];
+                    }
+
+                    _.forEach(filterValue, oneValue => {
+                        _.forEach(facetConfig.ranges, filterRangeConfig => {
+                            if (oneValue === filterRangeConfig.key) {
+                                // TODO: support nested too
+                                matchingRangeQueries.push({
+                                    range: {
+                                        [facetConfig.field]: {
+                                            gte: filterRangeConfig.from,
+                                            lt: filterRangeConfig.to
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    });
+
+                    // push a missing data query here
+                    matchingRangeQueries.push(this.missingQuery(facetConfig.field));
+
+                    const query = this.boolShouldQueries(matchingRangeQueries);
+                    if (query) {
+                        facetQueries.push(query);
+                    }
+                }
+            }
+
+            return true;
+        });
+
+        if (facetQueries.length === 0) {
+            return undefined;
+        }
+
+        if (facetQueries.length === 1) {
+            return facetQueries[0];
+        }
+
+        return {
+            and: {
+                filters: _.map(facetQueries, filter => ({query: filter}))
             }
         };
     }
@@ -508,7 +640,13 @@ class SearcherInternal {
         return this.buildDefaultSort(sortConfigs);
     }
 
-    facet(facetConfig) {
+    facetAggregation(aggregationConfig) {
+        return {
+            [aggregationConfig.type]: {field: aggregationConfig.field}
+        };
+    }
+
+    facet(facetConfig, summariesConfig) {
         if (!facetConfig.key) {
             throw new ValidationError('No name defined for facet', {details: {code: 'NO_FACET_NAME_DEFINED'}});
         }
@@ -575,6 +713,16 @@ class SearcherInternal {
             throw new ValidationError('Unknown facet type', {details: {code: 'UNKNOWN_FACET_TYPE', facetName: facetConfig.key, facetType: facetConfig.type}});
         }
 
+        if (summariesConfig) {
+            const summaryAggregations = {};
+
+            _.forEach(summariesConfig, (summaryConfig, summaryKey) => {
+                summaryAggregations[summaryKey] = this.facetAggregation(summaryConfig);
+            });
+
+            facetValue.aggs = summaryAggregations;
+        }
+
         if ((facetConfig.type === 'field' || facetConfig.type === 'ranges') && facetConfig.nestedPath) {
             facetValue = {
                 nested: {
@@ -592,6 +740,13 @@ class SearcherInternal {
         };
     }
 
+    // summaryFacet(facetKey, summaryConfig) {
+    //     return {
+    //         key: facetKey,
+    //         value: this.facetAggregation(summaryConfig)
+    //     };
+    // }
+
     facetsPart(searchTypeConfig) {
         if (!searchTypeConfig.facets) {
             return null;
@@ -604,8 +759,18 @@ class SearcherInternal {
 
         const facets = {};
 
+        // if there is summaries
+        // then build a special facet
+        // also add the summary to each facet
+        if (searchTypeConfig.summaries) {
+            _.forEach(searchTypeConfig.summaries, (summaryConfig, summaryKey) => {
+                const key = `__summary_${summaryKey}__`;
+                facets[key] = this.facetAggregation(summaryConfig);
+            });
+        }
+
         _.forEach(facetConfigs, facetConfig => {
-            const facet = this.facet(facetConfig);
+            const facet = this.facet(facetConfig, searchTypeConfig.summaries);
             facets[facet.key] = facet.value;
         });
 
@@ -651,7 +816,7 @@ class SearcherInternal {
                                       must: query || {
                                           match_all: {}
                                       },
-                                      filter: this.filterPart(searchTypeConfig, input, _.keys(queryLanguages), false)
+                                      filter: this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages))
                                   }
                               },
                               field_value_factor: {
@@ -661,7 +826,7 @@ class SearcherInternal {
                               }
                           }
                       },
-                      post_filter: this.filterPart(searchTypeConfig, input, _.keys(queryLanguages), true),
+                      post_filter: this.facetQueries(searchTypeConfig, input),
                       aggs: facets
                   },
                   queryLanguages
@@ -713,6 +878,22 @@ class SearcherInternal {
 
         const searchTypeConfig = type && searchTypesConfig[type];
 
+        let summaryKeys = null;
+        if (searchTypeConfig && searchTypeConfig.summaries) {
+            summaryKeys = _.chain(searchTypeConfig.summaries).keys().value();
+        }
+
+        let summaries;
+        if (summaryKeys && response.aggregations) {
+            summaries = {};
+            _.forEach(summaryKeys, summaryKey => {
+                const summary = _.get(response.aggregations, [`__summary_${summaryKey}__`, 'value']);
+                if (!_.isUndefined(summary)) {
+                    summaries[summaryKey] = summary;
+                }
+            });
+        }
+
         let facets;
         if (searchTypeConfig && searchTypeConfig.facets && response.aggregations) {
             facets = {};
@@ -738,31 +919,51 @@ class SearcherInternal {
                     // bucket is an object with key as object key and doc_count as value
                     const output = facets[facetConfig.key] = [];
 
-                    _.forEach(buckets, (bucket, key) => output.push({
-                        key,
-                        count: bucket.doc_count,
-                        from: facet.from,
-                        from_as_string: facet.from_as_string,
-                        to: facet.to,
-                        to_as_string: facet.to_as_string
-                    }));
+                    _.forEach(buckets, (bucket, key) => {
+                        const facetResult = {
+                            key,
+                            count: bucket.doc_count,
+                            from: facet.from,
+                            from_as_string: facet.from_as_string,
+                            to: facet.to,
+                            to_as_string: facet.to_as_string
+                        };
+
+                        if (summaryKeys) {
+                            _.forEach(summaryKeys, summaryKey => {
+                                facetResult[summaryKey] = _.get(bucket, [summaryKey, 'value']);
+                            });
+                        }
+
+                        output.push(facetResult);
+                    });
                 } else {
                     // bucket is an array of objects with key and doc_count
-                    facets[facetConfig.key] = _.map(buckets, bucket => ({
-                        key: bucket.key,
-                        count: bucket.doc_count,
-                        from: facet.from,
-                        from_as_string: facet.from_as_string,
-                        to: facet.to,
-                        to_as_string: facet.to_as_string
-                    }));
+                    facets[facetConfig.key] = _.map(buckets, bucket => {
+                        const facetResult = {
+                            key: bucket.key,
+                            count: bucket.doc_count,
+                            from: facet.from,
+                            from_as_string: facet.from_as_string,
+                            to: facet.to,
+                            to_as_string: facet.to_as_string
+                        };
+
+                        if (summaryKeys) {
+                            _.forEach(summaryKeys, summaryKey => {
+                                facetResult[summaryKey] = _.get(bucket, [summaryKey, 'value']);
+                            });
+                        }
+
+                        return facetResult;
+                    });
                 }
 
                 return true;
             });
         }
 
-        return {type, name, results, facets, queryTimeTaken: response.took, totalResults: _.get(response, 'hits.total', 0)};
+        return {type, name, results, summaries, facets, queryTimeTaken: response.took, totalResults: _.get(response, 'hits.total', 0)};
     }
 
     processMultipleSearchResponse(responses, searchTypesConfig, types, input) {
@@ -1053,7 +1254,7 @@ class SearcherInternal {
         const viewConfig = this.searchConfig.views.types[type];
         const indexTypeConfig = viewConfig.indexType;
 
-        const filter = this.filterPart(viewConfig, input);
+        const filter = this.filterQueries(viewConfig, input);
         const postFilters = this.postFilters(viewConfig, input);
 
         const query = {
@@ -1098,7 +1299,7 @@ export default class Searcher {
         return Promise.resolve(promise)
           .catch(error => {
               console.error('>>> Error', method, request, error, error.stack);
-              
+
               if (error && (error._errorCode === 'VALIDATION_ERROR' || error._errorCode === 'INTERNAL_SERVICE_ERROR')) {
                   // rethrow same error
                   throw error;
