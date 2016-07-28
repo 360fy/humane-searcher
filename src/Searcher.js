@@ -47,7 +47,7 @@ class SearcherInternal {
             defaultType: '*',
             types: {
                 searchQuery: {
-                    indexType: DefaultTypes.searchQuery,
+                    // indexType: DefaultTypes.searchQuery,
                     queryFields: [
                         {
                             field: 'unicodeQuery',
@@ -70,7 +70,7 @@ class SearcherInternal {
         const DefaultViews = {
             types: {
                 searchQuery: {
-                    indexType: DefaultTypes.searchQuery,
+                    // indexType: DefaultTypes.searchQuery,
                     sort: {count: true},
                     filters: {
                         hasResults: {
@@ -100,6 +100,10 @@ class SearcherInternal {
             views: DefaultViews
         });
 
+        this.enhanceSearchTypes(_.get(this.searchConfig, ['autocomplete', 'types']), this.searchConfig);
+        this.enhanceSearchTypes(_.get(this.searchConfig, ['search', 'types']), this.searchConfig);
+        this.enhanceSearchTypes(_.get(this.searchConfig, ['views', 'types']), this.searchConfig);
+
         this.apiSchema = buildApiSchema(config.searchConfig);
         this.esClient = new ESClient(_.pick(config, ['logLevel', 'esConfig', 'redisConfig', 'redisSentinelConfig']));
         this.transliterator = config.transliterator;
@@ -109,8 +113,22 @@ class SearcherInternal {
 
         // this.registerEventHandlers(DefaultEventHandlers);
         this.registerEventHandlers(config.searchConfig.eventHandlers);
+    }
 
-        // console.log('Final search config for instance: ', this.instanceName, JSON.stringify(this.searchConfig, null, 2));
+    enhanceSearchTypes(types, searchConfig) {
+        if (!types) {
+            return;
+        }
+
+        _.forEach(types, (type, key) => {
+            if (!type.indexType) {
+                type.indexType = searchConfig.types[key];
+            } else if (type.indexType && _.isString(type.indexType)) {
+                type.indexType = searchConfig.types[type.indexType];
+            } else if (_.isObject(type.indexType)) {
+                type.indexType = _.defaultsDeep(type.indexType, searchConfig.types[key] || {});
+            }
+        });
     }
 
     enhanceType(indices, key, type) {
