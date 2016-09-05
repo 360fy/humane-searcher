@@ -1120,12 +1120,6 @@ class SearcherInternal {
         return this._searchInternal(headers, validatedInput, this.searchConfig.autocomplete, Constants.AUTOCOMPLETE_EVENT);
     }
 
-    search(headers, input) {
-        const validatedInput = this.validateInput(input, this.apiSchema.search);
-
-        return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
-    }
-
     formSearch(headers, input) {
         const validatedInput = this.validateInput(input, this.apiSchema.formSearch);
 
@@ -1136,6 +1130,147 @@ class SearcherInternal {
         const validatedInput = this.validateInput(input, this.apiSchema.browseAll);
 
         return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.BROWSE_ALL_EVENT);
+    }
+
+    buildSearchSections(text, sectionQueries) {
+        return Promise.props(sectionQueries)
+          .then(response => {
+              // combine all results into one and return sections
+              const finalResult = {
+                  searchText: text,
+                  results: []
+              };
+
+              _.forEach(response, (value, key) => {
+                  let section = _.defaults({type: 'section', name: key}, value);
+
+                  if (value.count === 1) {
+                      section.mode = 'single';
+                      section.result = section.results[0];
+                      section = _.omit(section, 'results');
+                  }
+
+                  finalResult.results.push(section);
+              });
+
+              return finalResult;
+          });
+    }
+
+    search(headers, input) {
+        const validatedInput = this.validateInput(input, this.apiSchema.search);
+
+        if (this.instanceName === 'carDekho') {
+            if (validatedInput.text === 'brand-single') {
+                // model search for brand
+                // used car search for brand
+                // news search for brand
+                // new car dealers for brand
+                // used car dealers for brand
+                // service centers for brand
+                return this.buildSearchSections(validatedInput.text, {
+                    models: this.browseAll(headers, {type: 'new_car_model'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'brand-multi') {
+                // matching brands
+                // used car search for matching brands
+                // news search for matching brands
+                // new car dealers for matching brands
+                // used car dealers for matching brands
+                // service centers for matching brands
+                return this.buildSearchSections(validatedInput.text, {
+                    'matching-brands': this.browseAll(headers, {type: 'new_car_brand'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'model-single') {
+                // matching single model
+                // variants for matching model
+                // used cars for matching model or brand of the matching model
+                // news for matching model or brand of the matching model
+                // new car dealers for brand of the matching model
+                // used car dealers for brand of the matching model
+                // service centers for brand of brand of the matching model
+                return this.buildSearchSections(validatedInput.text, {
+                    model: this.browseAll(headers, {type: 'new_car_model', count: 1}),
+                    variants: this.browseAll(headers, {type: 'new_car_variant'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'model-multi') {
+                // matching models
+                // used cars for matching models or brand of the matching models
+                // news for matching models or brand of the matching models
+                // new car dealers for brand of the matching models
+                // used car dealers for brand of the matching models
+                // service centers for brand of brand of the matching models
+                return this.buildSearchSections(validatedInput.text, {
+                    'matching-models': this.browseAll(headers, {type: 'new_car_model'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'variant-single') {
+                // matching single variant
+                // similar variants
+                // used cars for models of the matching variant
+                // news for models of the matching variant
+                // new car dealers for brand of the matching variant
+                // used car dealers for brand of the matching variant
+                // service centers for brand of brand of the matching variant
+                return this.buildSearchSections(validatedInput.text, {
+                    variant: this.browseAll(headers, {type: 'new_car_model', count: 1}),
+                    'similar-variants': this.browseAll(headers, {type: 'new_car_variant'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'variant-multi') {
+                // matching variants
+                // used cars for models of the matching variants
+                // news for models of the matching variants
+                // new car dealers for brand of the matching variants
+                // used car dealers for brand of the matching variants
+                // service centers for brand of brand of the matching variants
+                return this.buildSearchSections(validatedInput.text, {
+                    'matching-variants': this.browseAll(headers, {type: 'new_car_variant'}),
+                    'used-cars': this.browseAll(headers, {type: 'used_car'}),
+                    news: this.browseAll(headers, {type: 'car_news'}),
+                    'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}),
+                    'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'}),
+                    'service-centers': this.browseAll(headers, {type: 'service_center'})
+                });
+            } else if (validatedInput.text === 'model-link-single') {
+                // single matching link
+                // related links
+                return this.buildSearchSections(validatedInput.text, {
+                    link: this.browseAll(headers, {type: 'new_car_model_page', count: 1}),
+                    'related-links': this.browseAll(headers, {type: 'new_car_model_page'})
+                });
+            } else if (validatedInput.text === 'model-link-multi') {
+                // matching links
+                return this.buildSearchSections(validatedInput.text, {
+                    'matching-links': this.browseAll(headers, {type: 'new_car_model_page'})
+                });
+            }
+        }
+
+        return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
     }
 
     didYouMean(headers, input) {
