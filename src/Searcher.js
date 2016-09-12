@@ -232,10 +232,12 @@ class SearcherInternal {
         return this.constantScoreQuery(fieldConfig, fieldConfig.nestedPath ? {nested: {path: fieldConfig.nestedPath, query}} : query);
     }
 
-    humaneQuery(fieldConfig, text) {
+    humaneQuery(fieldConfig, text, intentIndex, intentFields) {
         return {
             humane_query: {
                 [fieldConfig.field]: {
+                    intentIndex,
+                    intentFields,
                     query: text,
                     boost: fieldConfig.weight,
                     vernacularOnly: fieldConfig.vernacularOnly,
@@ -285,13 +287,13 @@ class SearcherInternal {
         };
     }
 
-    buildFieldQuery(fieldConfig, englishTerm, queries) {
+    buildFieldQuery(fieldConfig, englishTerm, queries, intentIndex, intentFields) {
         let query = null;
 
         if (fieldConfig.termQuery && fieldConfig.filter) {
             query = this.termQuery(fieldConfig, englishTerm);
         } else {
-            query = this.humaneQuery(fieldConfig, englishTerm);
+            query = this.humaneQuery(fieldConfig, englishTerm, intentIndex, intentFields);
         }
 
         query = this.wrapQuery(fieldConfig, query);
@@ -320,7 +322,7 @@ class SearcherInternal {
         return typeConfig;
     }
 
-    buildTypeQuery(searchTypeConfig, text, fuzzySearch) {
+    buildTypeQuery(searchTypeConfig, text, fuzzySearch, intentIndex, intentFields) {
         if (!text || _.isEmpty(text)) {
             return {};
         }
@@ -363,7 +365,9 @@ class SearcherInternal {
                             query: text,
                             boost: queryField.weight,
                             vernacularOnly: queryField.vernacularOnly,
-                            noFuzzy: !fuzzySearch || queryField.noFuzzy
+                            noFuzzy: !fuzzySearch || queryField.noFuzzy,
+                            intentIndex,
+                            intentFields
                         }
                     }
                 })
@@ -373,6 +377,8 @@ class SearcherInternal {
             query: {
                 multi_humane_query: {
                     query: text,
+                    intentIndex,
+                    intentFields,
                     fields: _(queryFields)
                       .map(queryField => ({
                           field: queryField.field,
@@ -388,7 +394,7 @@ class SearcherInternal {
         };
     }
 
-    filterQueries(searchTypeConfig, input, termLanguages) {
+    filterQueries(searchTypeConfig, input, termLanguages, intentIndex, intentFields) {
         const filterConfigs = searchTypeConfig.filters || searchTypeConfig.indexType.filters;
 
         if (!filterConfigs) {
@@ -425,18 +431,18 @@ class SearcherInternal {
                     filterValue = filterConfig.value(filterValue);
                 }
 
-                this.buildFieldQuery(_.extend({filter: true}, filterConfigs[key]), filterValue, filterQueries);
+                this.buildFieldQuery(_.extend({filter: true}, filterConfigs[key]), filterValue, filterQueries, intentIndex, intentFields);
             }
 
             return true;
         });
 
         if (input.lang && !_.isEmpty(input.lang)) {
-            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), input.lang, filterQueries);
+            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), input.lang, filterQueries, intentIndex, intentFields);
         }
 
         if (termLanguages && !_.isEmpty(termLanguages)) {
-            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), termLanguages, filterQueries);
+            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), termLanguages, filterQueries, intentIndex, intentFields);
         }
 
         if (filterQueries.length === 0) {
@@ -454,7 +460,7 @@ class SearcherInternal {
         };
     }
 
-    facetQueries(searchTypeConfig, input) {
+    facetQueries(searchTypeConfig, input, intentIndex, intentFields) {
         const facetConfigs = searchTypeConfig.facets || searchTypeConfig.indexType.facets;
 
         if (!facetConfigs) {
@@ -483,7 +489,7 @@ class SearcherInternal {
 
                 if (facetConfig.type === 'field') {
                     // form field query here - termQuery, nestedPath, field
-                    this.buildFieldQuery({filter: true, termQuery: true, field: facetConfig.field, nestedPath: facetConfig.nestedPath}, filterValue, facetQueries);
+                    this.buildFieldQuery({filter: true, termQuery: true, field: facetConfig.field, nestedPath: facetConfig.nestedPath}, filterValue, facetQueries, intentIndex, intentFields);
                 } else if (facetConfig.type === 'filters') {
                     // find matching filter and form appropriate query here
                     const matchingFilterQueries = [];
@@ -795,7 +801,7 @@ class SearcherInternal {
         return facets;
     }
 
-    searchQuery(searchTypeConfig, input) {
+    searchQuery(searchTypeConfig, input, intentIndex, intentFields) {
         let text = input.text;
 
         if ((this.instanceName === '1mg' || this.instanceName === 'netmeds') && text) {
@@ -807,7 +813,7 @@ class SearcherInternal {
               .trim();
         }
 
-        return Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch))
+        return Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
           .then(({query, queryLanguages}) => {
               const indexTypeConfig = searchTypeConfig.indexType;
 
@@ -835,7 +841,7 @@ class SearcherInternal {
                                       must: query || {
                                           match_all: {}
                                       },
-                                      filter: this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages))
+                                      filter: this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages), intentIndex, intentFields)
                                   }
                               },
                               field_value_factor: {
@@ -845,7 +851,7 @@ class SearcherInternal {
                               }
                           }
                       },
-                      post_filter: this.facetQueries(searchTypeConfig, input),
+                      post_filter: this.facetQueries(searchTypeConfig, input, intentIndex, intentFields),
                       aggs: facets
                   },
                   queryLanguages
@@ -1047,19 +1053,29 @@ class SearcherInternal {
 
         let responsePostProcessor = null;
 
-        let type = null;
+        let typeOrTypesArray = null;
 
+        const intentIndex = `${this.instanceName}:intent_store`;
+        let intentFields = [];
         if (!input.type || input.type === '*') {
             responsePostProcessor = searchApiConfig.multiResponsePostProcessor;
 
-            type = _(searchTypeConfigs)
+            typeOrTypesArray = [];
+            _(searchTypeConfigs)
               .values()
-              .map(typeConfig => typeConfig.indexType && typeConfig.indexType.type)
-              .value();
+              .forEach(searchTypeConfig => {
+                  typeOrTypesArray.push(_.get(searchTypeConfig, 'indexType.type'));
+                  intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
+              });
+
+            // typeOrTypesArray = _(searchTypeConfigs)
+            //   .values()
+            //   .map(typeConfig => typeConfig.indexType && typeConfig.indexType.type)
+            //   .value();
 
             const searchQueries = _(searchTypeConfigs)
               .values()
-              .map(typeConfig => this.searchQuery(typeConfig, input))
+              .map(typeConfig => this.searchQuery(typeConfig, input, intentIndex, intentFields))
               .value();
 
             multiSearch = _.isArray(searchQueries) || false;
@@ -1068,7 +1084,8 @@ class SearcherInternal {
         } else {
             const searchTypeConfig = searchTypeConfigs[input.type];
 
-            type = searchTypeConfig.indexType && searchTypeConfig.indexType.type;
+            typeOrTypesArray = searchTypeConfig.indexType && searchTypeConfig.indexType.type;
+            intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
 
             if (!searchTypeConfig) {
                 throw new ValidationError(`No type config found for: ${input.type}`, {details: {code: 'SEARCH_CONFIG_NOT_FOUND', type: input.type}});
@@ -1076,7 +1093,7 @@ class SearcherInternal {
 
             responsePostProcessor = searchTypeConfig.responsePostProcessor;
 
-            promise = this.searchQuery(searchTypeConfig, input);
+            promise = this.searchQuery(searchTypeConfig, input, intentIndex, intentFields);
         }
 
         return Promise.resolve(promise)
@@ -1098,10 +1115,10 @@ class SearcherInternal {
           })
           .then((response) => {
               if (multiSearch) {
-                  return this.processMultipleSearchResponse(response, searchTypeConfigs, type, input);
+                  return this.processMultipleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
               }
 
-              return this.processSingleSearchResponse(response, searchTypeConfigs, type, input);
+              return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
           })
           .then(response => {
               this.eventEmitter.emit(eventName, {headers, queryData: input, queryLanguages, queryResult: response});
