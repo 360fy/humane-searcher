@@ -1079,7 +1079,7 @@ class SearcherInternal {
 
         let typeOrTypesArray = null;
 
-        const intentIndex = `${this.instanceName}:intent_store`;
+        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`;
         let intentFields = [];
         if (!input.type || input.type === '*') {
             responsePostProcessor = searchApiConfig.multiResponsePostProcessor;
