@@ -1,12 +1,9 @@
 import _ from 'lodash';
 import Promise from 'bluebird';
-
 import md5 from 'md5';
 import performanceNow from 'performance-now';
-
 import buildRedisClient from 'humane-node-commons/lib/RedisClient';
 import * as Request from 'humane-node-commons/lib/Request';
-
 import InternalServiceError from 'humane-node-commons/lib/InternalServiceError';
 
 export default class ESClient {
@@ -19,7 +16,7 @@ export default class ESClient {
         } else {
             this.redisKeyPrefix = '';
         }
-        
+
         this.redisClient = buildRedisClient(_.pick(config, ['redisConfig', 'redisSentinelConfig']));
     }
 
@@ -221,6 +218,42 @@ export default class ESClient {
         return this.request({method: 'GET', uri})
           .then((response) => Request.handleResponse(response))
           .catch(error => {
+              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          });
+    }
+
+    intent(index, query) {
+        const startTime = performanceNow();
+
+        const uri = `/${index}/_intent`;
+
+        console.log('intent: ', uri, JSON.stringify(query));
+
+        const queryKey = md5(JSON.stringify(query));
+        const cacheKey = `${uri}:${queryKey}`;
+
+        return this.retrieveFromCache(cacheKey)
+          .then(cacheResponse => {
+              if (cacheResponse) {
+                  cacheResponse.took = _.round(performanceNow() - startTime, 3);
+
+                  console.log('search: Retrieved from cache in (ms): ', cacheResponse.took);
+
+                  return cacheResponse;
+              }
+
+              return this.request({method: 'POST', uri, body: query})
+                .then((response) => Request.handleResponse(response))
+                .then(queryResponse => {
+                    if (queryResponse) {
+                        return this.storeInCache(cacheKey, queryResponse);
+                    }
+
+                    return null;
+                });
+          })
+          .catch(error => {
+              console.error('Error: ', error, error.stack);
               throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
           });
     }

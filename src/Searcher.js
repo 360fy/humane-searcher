@@ -1105,12 +1105,12 @@ class SearcherInternal {
         } else {
             const searchTypeConfig = searchTypeConfigs[input.type];
 
-            typeOrTypesArray = searchTypeConfig.indexType && searchTypeConfig.indexType.type;
-            intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
-
             if (!searchTypeConfig) {
                 throw new ValidationError(`No type config found for: ${input.type}`, {details: {code: 'SEARCH_CONFIG_NOT_FOUND', type: input.type}});
             }
+
+            typeOrTypesArray = searchTypeConfig.indexType && searchTypeConfig.indexType.type;
+            intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
 
             responsePostProcessor = searchTypeConfig.responsePostProcessor;
 
@@ -1154,6 +1154,58 @@ class SearcherInternal {
           });
     }
 
+    // build
+    //      intent index
+    //      lookUpEntities
+    //      regexEntities - todo later
+    //      query
+    _intentInternal(headers, input, searchApiConfig) {
+        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`;
+        const query = input.text;
+
+        const searchTypeConfigs = searchApiConfig.types;
+
+        // TODO: find lookup entities
+        // TODO: filter and map these with
+        let intentFields = [];
+        if (!input.type || input.type === '*') {
+            _(searchTypeConfigs)
+              .values()
+              .forEach(searchTypeConfig => {
+                  intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
+              });
+        } else {
+            const searchTypeConfig = searchTypeConfigs[input.type];
+
+            if (!searchTypeConfig) {
+                throw new ValidationError(`No type config found for: ${input.type}`, {details: {code: 'SEARCH_CONFIG_NOT_FOUND', type: input.type}});
+            }
+
+            intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
+        }
+
+        intentFields = _.uniq(intentFields);
+
+        const lookupEntities = _(intentFields)
+          .uniq()
+          .map(intentField => ({name: intentField, value: _.get(this.searchConfig, ['lookupIntentEntities', intentField])}))
+          .filter(value => !!value.value)
+          .map(value => (_.defaults({name: value.name}, value.value)))
+          .value();
+
+        const intentQuery = {query, lookupEntities};
+
+        console.log('Intent Query: ', JSON.stringify(intentQuery, null, 2));
+
+        // form the request and get a response
+        return Promise.resolve(this.esClient.intent(intentIndex, intentQuery));
+    }
+
+    intent(headers, input) {
+        // TODO: do validation later
+        return this._intentInternal(headers, input);
+    }
+
     autocomplete(headers, input) {
         const validatedInput = this.validateInput(input, this.apiSchema.autocomplete);
 
@@ -1194,6 +1246,310 @@ class SearcherInternal {
               });
 
               return finalResult;
+          });
+    }
+
+    buildIntentTokenQuery(intentToken, weight, field) {
+        let fieldSuffix = 'humane';
+        if (intentToken.match_token_type === 'Bi') {
+            // form a shingle field query
+            fieldSuffix = 'shingle';
+        }
+
+        return {
+            bool: {
+                should: [
+                    {
+                        term: {
+                            [`${field}.${fieldSuffix}`]: {
+                                value: intentToken.token,
+                                boost: 10.0 * weight * intentToken.score
+                            }
+                        }
+                    },
+                    {
+                        term: {
+                            [`${field}.${fieldSuffix}`]: {
+                                value: `e#${intentToken.token}`,
+                                boost: 2.0 * weight * intentToken.score
+                            }
+                        }
+                    }
+                ],
+                minimum_should_match: 1
+            }
+        };
+    }
+
+    buildIntentTokenListQuery(intentTokenList, weight, field) {
+        if (intentTokenList.length > 1) {
+            return {
+                bool: {
+                    should: _.map(intentTokenList, intentToken => this.buildIntentTokenQuery(intentToken, weight, field)),
+                    minimum_should_match: intentTokenList.length
+                }
+            };
+        }
+
+        return this.buildIntentTokenQuery(intentTokenList[0], weight, field);
+    }
+
+    buildIntentSuggestionQuery(intentSuggestion, field) {
+        // make a boolean or query
+        // find min should match
+        return this.buildIntentTokenListQuery(intentSuggestion.intent_tokens, intentSuggestion.score, field);
+    }
+
+    buildIntentSuggestionListQuery(intentSuggestionList, field) {
+        // make a dis-max of intent suggestion query
+        if (intentSuggestionList.length > 1) {
+            return {
+                dis_max: {
+                    tie_breaker: 0.7,
+                    boost: 1.2,
+                    queries: _.map(intentSuggestionList, intentSuggestion =>
+                      this.buildIntentSuggestionQuery(intentSuggestion, field))
+                }
+            };
+        }
+
+        return this.buildIntentSuggestionQuery(intentSuggestionList[0], field);
+    }
+
+    executeIntentSuggestionListQuery(intentSuggestionList, type, field) {
+        return Promise.resolve(this.esClient.search({
+            index: `${_.toLower(this.instanceName)}_store`,
+            type,
+            search: {
+                query: this.buildIntentSuggestionListQuery(intentSuggestionList, field)
+            }
+        }))
+          .then(response => this._processResponse(response, this.searchConfig.search.types, type));
+    }
+
+    searchCarDekhoBrand(intentSuggestions) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_brand', 'brand');
+    }
+
+    searchCarDekhoModel(intentSuggestions) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_model', 'model');
+    }
+
+    searchCarDekhoVariant(intentSuggestions) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_variant', 'variant');
+    }
+
+    searchUsedCarsByIntentSuggestions(intentSuggestions, field) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'used_car', field);
+    }
+
+    searchNewsByIntentSuggestions(intentSuggestions, field) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'car_news', field);
+    }
+
+    searchNewCarDealersByIntentSuggestions(intentSuggestions, field) {
+        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_dealer', field);
+    }
+
+    searchUsedCarsByMatchingBrands() {
+
+    }
+
+    searchUsedCarsByMatchingModelsOrBrands() {
+
+    }
+
+    searchNewsByMatchingBrands() {
+
+    }
+
+    searchNewsByMatchingModels() {
+
+    }
+
+    searchNewCarDealersByMatchingBrands() {
+
+    }
+
+    buildSection(sectionResponseOrPromise, sectionName, sectionType, sectionTitle) {
+        return Promise.resolve(sectionResponseOrPromise)
+          .then(response => (_.defaults({type: 'section', name: sectionName, title: sectionTitle, resultType: sectionType}, response)));
+    }
+
+    composeSections(...sections) {
+        return Promise.all(sections)
+          .then(responses => {
+              let totalResults = 0;
+              _.forEach(responses, response => {
+                  totalResults += _.get(response, 'totalResults', 0);
+              });
+
+              return {
+                  results: responses,
+                  totalResults
+              };
+          });
+    }
+
+    carDekhoIntentBasedSearch(intentSuggestions, headers, input, searchApiConfig) {
+        return Promise.props({
+            brand: this.searchCarDekhoBrand(intentSuggestions),
+            model: this.searchCarDekhoModel(intentSuggestions),
+            variant: this.searchCarDekhoVariant(intentSuggestions)
+        })
+          .then(response => {
+              // check if brand result and how many
+              // else check if model result and how many
+              // else check if variant results and how many
+              const brandHits = _.get(response, 'brand.totalResults', 0);
+              const modelHits = _.get(response, 'model.totalResults', 0);
+              const variantHits = _.get(response, 'variant.totalResults', 0);
+
+              let searchType = null;
+              if (brandHits) {
+                  if (brandHits === 1) {
+                      searchType = 'brand-single';
+                  } else {
+                      searchType = 'brand-multi';
+                  }
+              } else if (modelHits) {
+                  if (modelHits === 1) {
+                      searchType = 'model-single';
+                  } else {
+                      searchType = 'model-multi';
+                  }
+              } else if (variantHits) {
+                  if (variantHits === 1) {
+                      searchType = 'variant-single';
+                  } else {
+                      searchType = 'variant-multi';
+                  }
+              }
+
+              if (!searchType) {
+                  return this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT);
+              }
+
+              if (searchType === 'brand-single') {
+                  // model search for brand
+                  // used car search for brand
+                  // news search for brand
+                  // new car dealers for brand
+
+                  // return this.buildSearchSections(validatedInput.text, {
+                  //     models: this.browseAll(headers, {type: 'new_car_model'}), // use existing results for models
+                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make simple query with intentSuggestions, field = brand
+                  //     news: this.browseAll(headers, {type: 'car_news'}), // make simple query with intentSuggestions, field = brand
+                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make simple query with intentSuggestions, field = brand
+                  // });
+
+                  return this.composeSections(
+                    this.buildSection(response.model, 'models', 'new_car_model', 'New Cars'),
+                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'), 'used-cars', 'used_car', 'Used Cars'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'news', 'car_news', 'News'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  );
+              } else if (searchType === 'brand-multi') {
+                  // matching brands
+                  // used car search for matching brands
+                  // news search for matching brands
+                  // new car dealers for matching brands
+
+                  // return this.buildSearchSections(validatedInput.text, {
+                  //     'matching-brands': this.browseAll(headers, {type: 'new_car_brand'}), // use existing results for brands
+                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make simple query with intentSuggestions, field = brand
+                  //     news: this.browseAll(headers, {type: 'car_news'}), // make simple query with intent suggestions, field = brand
+                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make simple query with intent suggestions, field = brand
+                  // });
+
+                  return this.composeSections(
+                    this.buildSection(response.brand, 'matching-brands', 'new_car_brand', 'Matching Brands'),
+                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'), 'used-cars', 'used_car', 'Used Cars'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'news', 'car_news', 'News'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  );
+              } else if (searchType === 'model-single') {
+                  // matching single model
+                  // variants for matching model
+                  // used cars for matching model or brand of the matching model
+                  // news for matching model or brand of the matching model
+                  // new car dealers for brand of the matching model
+
+                  // return this.buildSearchSections(validatedInput.text, {
+                  //     model: this.browseAll(headers, {type: 'new_car_model', count: 1}), // use existing results for models
+                  //     variants: this.browseAll(headers, {type: 'new_car_variant'}), // use existing results for variants
+                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for intent suggestions (field = model) or brand output
+                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for intent suggestions (field = model) or brand output (field = brand)
+                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
+                  // });
+
+                  return this.composeSections(
+                    this.buildSection(response.model, 'model', 'new_car_model', 'Matching Model'),
+                    this.buildSection(response.variant, 'variants', 'new_car_variant', 'New Cars'),
+                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  );
+              } else if (searchType === 'model-multi') {
+                  // matching models
+                  // used cars for matching models or brand of the matching models
+                  // news for matching models or brand of the matching models
+                  // new car dealers for brand of the matching models
+
+                  // return this.buildSearchSections(validatedInput.text, {
+                  //     'matching-models': this.browseAll(headers, {type: 'new_car_model'}), // use existing results for models
+                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for intent suggestions (field = model) or brand output
+                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for intent suggestions (field = model) or brand output (field = brand)
+                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
+                  // });
+
+                  return this.composeSections(
+                    this.buildSection(response.model, 'matching-models', 'new_car_model', 'Matching Models'),
+                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  );
+              } else if (searchType === 'variant-single') {
+                  // matching single variant
+                  // similar variants
+                  // used cars for models of the matching variant
+                  // news for models of the matching variant
+                  // new car dealers for brand of the matching variant
+
+                  // return this.buildSearchSections(validatedInput.text, {
+                  //     variant: this.browseAll(headers, {type: 'new_car_model', count: 1}), // use existing results for variants
+                  //     'similar-variants': this.browseAll(headers, {type: 'new_car_variant'}), // do not do it now
+                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for model output (field = model)
+                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for model output (field = model)
+                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
+                  // });
+
+                  return this.composeSections(
+                    this.buildSection(response.variant, 'variant', 'new_car_variant', 'Matching Variant'),
+                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
+                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  );
+              } //else /*if (searchType === 'variant-multi')*/ {
+              // matching variants
+              // used cars for models of the matching variants
+              // news for models of the matching variants
+              // new car dealers for brand of the matching variants
+
+              // return this.buildSearchSections(validatedInput.text, {
+              //     'matching-variants': this.browseAll(headers, {type: 'new_car_variant'}), // use existing results for variants
+              //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for model output (field = model)
+              //     news: this.browseAll(headers, {type: 'car_news'}), // make search for model output (field = model)
+              //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
+              // });
+
+              return this.composeSections(
+                this.buildSection(response.variant, 'matching-variants', 'new_car_variant', 'Matching Variants'),
+                this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
+                this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
+                this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+              );
+              //}
           });
     }
 
@@ -1308,6 +1664,24 @@ class SearcherInternal {
                     'matching-links': this.browseAll(headers, {type: 'new_car_model_page'})
                 });
             }
+
+            return Promise.resolve(this._intentInternal(headers, input, this.searchConfig.search))
+              .then(response => {
+                  console.log('Intent Response: ', JSON.stringify(response, null, 2));
+                  if (_.isEmpty(response.results)) {
+                      return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
+                  }
+
+                  // get the first result for now
+                  const intentResult = _.first(response.results);
+                  const intentSuggestions = _.get(intentResult, ['intent_classes', 'car_name']);
+                  if (!intentSuggestions || _.isEmpty(intentSuggestions)) {
+                      return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
+                  }
+
+                  // make a query for brand, model, or variant
+                  return this.carDekhoIntentBasedSearch(intentSuggestions, headers, validatedInput, this.searchConfig.search);
+              });
         }
 
         return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
