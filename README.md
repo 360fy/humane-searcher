@@ -3,7 +3,7 @@
 ## APIs
 
 > Note:
->    * Indexer APIs are available at: `http://<server-url>/:instanceName/searcher/api`.
+>    * Searcher APIs are available at: `http://<server-url>/:instanceName/searcher/api`.
 >    * All types must be valid index types defined in configuration.
 >    * BODY must be valid `JSON`.
 >    * All requests shall have `Content-Type` header as: `Content-Type: application/json`
@@ -243,78 +243,6 @@ This method builds autocomplete suggestions for a given type, based on input tex
 
 - Note: Not a valid method for multi autocomplete
     
-### Suggested Queries for Type
-
-This method builds suggested queries for a given type, based on input text.
-
-###### **Method 1**
-
-- TYPE  : `POST`
-
-- URL   : `/suggestedQueries`
-
-- BODY  : A `JSON` object comprising of following fields -
-
-    - **type**: 
-        * see search for explanation, except valid types are as defined in autocomplete configuration
-        * there is no separate configuration for suggested queries.
-            
-    - **text**: see search for explanation
-            
-    - **filter**: see search for explanation
-                      
-    - **page**: see search for explanation, though pagination does not make sense for suggested queries, but you can still do it if you want.
-    
-    - **count**: number of results or page size [defaults to `5`]
-    
-    - **requestTime**: see search for explanation
-     
-- SUCCESS RESPONSE :
-    * see search for explanation and scenarios
-    * but even for `multi` scenario response structure is same as `single` - except results array would have multiple types of results.
-
-- ERROR RESPONSE: See Common Error Scenarios
-
-###### **Method 2**
-
-- TYPE: `GET`
-
-- URL: `/suggestedQueries`
-
-- PARAMS: [qs](https://github.com/ljharb/qs) equivalent stringify of BODY as in method 1.
-
-- SUCCESS RESPONSE: Same as method 1
-
-- ERROR RESPONSE: Same as method 1
-
-###### **Method 3**
-
-- TYPE: `POST`
-
-- URL: `/:type/suggestedQueries`
-
-- BODY: Same as method-1, but omit `type` in body. 
-
-- SUCCESS RESPONSE: Same as method 1
-
-- ERROR RESPONSE: Same as method 1
-
-- Note: Not a valid method for multi autocomplete
-
-###### **Method 4**
-
-- TYPE: `GET`
-
-- URL: `/:type/suggestedQueries`
-
-- PARAMS: Same as method 2, but omit `type` in params.
-
-- SUCCESS RESPONSE: Same as method 1
-
-- ERROR RESPONSE: Same as method 1
-
-- Note: Not a valid method for multi autocomplete
-    
 ### Common Error Scenarios
 
 - Case: Unrecognized Type - when type is not among the configured
@@ -362,5 +290,3 @@ This method builds suggested queries for a given type, based on input text.
         "_errorId": 1458819775194
       }
       ```    
-
-## Configuration
