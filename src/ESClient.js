@@ -126,7 +126,7 @@ export default class ESClient {
           .then(query => {
               const uri = `/${query.index}/${query.type}/_search`;
 
-              console.log('search: ', uri, JSON.stringify(query.search));
+              // console.log('search: ', uri, JSON.stringify(query.search));
 
               const queryKey = md5(JSON.stringify(query.search));
               const cacheKey = `${uri}:${queryKey}`;
@@ -227,8 +227,6 @@ export default class ESClient {
 
         const uri = `/${index}/_intent`;
 
-        console.log('intent: ', uri, JSON.stringify(query));
-
         const queryKey = md5(JSON.stringify(query));
         const cacheKey = `${uri}:${queryKey}`;
 
@@ -237,7 +235,7 @@ export default class ESClient {
               if (cacheResponse) {
                   cacheResponse.took = _.round(performanceNow() - startTime, 3);
 
-                  console.log('search: Retrieved from cache in (ms): ', cacheResponse.took);
+                  console.log('intent: Retrieved from cache in (ms): ', cacheResponse.took);
 
                   return cacheResponse;
               }
