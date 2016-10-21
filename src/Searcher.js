@@ -287,18 +287,36 @@ class SearcherInternal {
         };
     }
 
-    buildFieldQuery(fieldConfig, englishTerm, queries, intentIndex, intentFields) {
+    buildFieldQuery(fieldConfig, valueOrArrayOfValue, queries, intentIndex, intentFields) {
         let query = null;
 
-        if (fieldConfig.termQuery && fieldConfig.filter) {
-            query = this.termQuery(fieldConfig, englishTerm);
+        if (fieldConfig.filter && fieldConfig.rangeQuery) {
+            if (!_.isArray(valueOrArrayOfValue)) {
+                valueOrArrayOfValue = [valueOrArrayOfValue];
+            }
+
+            const matchingRangeQueries = [];
+            _.forEach(valueOrArrayOfValue, oneValue => {
+                matchingRangeQueries.push({
+                    range: {
+                        [fieldConfig.field]: {
+                            gte: oneValue.from,
+                            lt: oneValue.to
+                        }
+                    }
+                });
+            });
+
+            query = this.boolShouldQueries(matchingRangeQueries);
+        } else if (fieldConfig.filter && fieldConfig.termQuery) {
+            query = this.termQuery(fieldConfig, valueOrArrayOfValue);
         } else {
-            query = this.humaneQuery(fieldConfig, englishTerm, intentIndex, intentFields);
+            query = this.humaneQuery(fieldConfig, valueOrArrayOfValue, intentIndex, intentFields);
         }
 
         query = this.wrapQuery(fieldConfig, query);
 
-        if (fieldConfig.termQuery && fieldConfig.filter) {
+        if (fieldConfig.filter && (fieldConfig.termQuery || fieldConfig.rangeQuery) && fieldConfig.includeMissing) {
             query = this.boolShouldQueries([query, this.wrapQuery(fieldConfig, this.missingQuery(fieldConfig.field))]);
         }
 
@@ -410,16 +428,24 @@ class SearcherInternal {
             }
 
             let filterValue = null;
-
+            let range = false;
             if (input.filter && input.filter[key]) {
                 filterValue = input.filter[key];
             } else if (filterConfig.defaultValue) {
                 filterValue = filterConfig.defaultValue;
+            } else if (filterValue.range) {
+                filterValue = filterValue.range;
+                range = true;
+            } else if (filterValue.ranges) {
+                filterValue = filterValue.ranges;
+                range = true;
             }
 
-            if (filterValue && filterValue !== '__all__') {
+            if (filterValue && filterValue !== '__all__' && _.isObject(filterValue)) {
                 const filterType = filterValue.type;
-                if (filterValue.values && filterType) {
+                if (filterValue.value) {
+                    filterValue = filterValue.value;
+                } else if (filterValue.values) {
                     filterValue = filterValue.values;
                 }
 
@@ -431,7 +457,7 @@ class SearcherInternal {
                     filterValue = filterConfig.value(filterValue);
                 }
 
-                this.buildFieldQuery(_.extend({filter: true}, filterConfigs[key]), filterValue, filterQueries, intentIndex, intentFields);
+                this.buildFieldQuery(_.defaults({filter: true, rangeQuery: range, termQuery: !range && filterConfig.termQuery}, filterConfig), filterValue, filterQueries, intentIndex, intentFields);
             }
 
             return true;
@@ -477,10 +503,19 @@ class SearcherInternal {
                 filterValue = input.filter[facetConfigKey];
             }
 
-            if (filterValue && filterValue !== '__all__') {
+            if (filterValue && filterValue !== '__all__' && _.isObject(filterValue)) {
                 const filterType = filterValue.type;
-                if (filterValue.values && filterType) {
+                let range = false;
+                if (filterValue.value) {
+                    filterValue = filterValue.value;
+                } else if (filterValue.values) {
                     filterValue = filterValue.values;
+                } else if (filterValue.range) {
+                    filterValue = filterValue.range;
+                    range = true;
+                } else if (filterValue.ranges) {
+                    filterValue = filterValue.ranges;
+                    range = true;
                 }
 
                 if (!filterType || filterType !== 'facet') {
@@ -489,7 +524,15 @@ class SearcherInternal {
 
                 if (facetConfig.type === 'field') {
                     // form field query here - termQuery, nestedPath, field
-                    this.buildFieldQuery({filter: true, termQuery: true, field: facetConfig.field, nestedPath: facetConfig.nestedPath}, filterValue, facetQueries, intentIndex, intentFields);
+                    this.buildFieldQuery({
+                        filter: true,
+                        termQuery: !range,
+                        rangeQuery: range,
+                        field: facetConfig.field,
+                        nestedPath: facetConfig.nestedPath,
+                        includeMissing: facetConfig.includeMissing,
+                        supportsRangeQuery: facetConfig.supportsRangeQuery
+                    }, filterValue, facetQueries, intentIndex, intentFields);
                 } else if (facetConfig.type === 'filters') {
                     // find matching filter and form appropriate query here
                     const matchingFilterQueries = [];
@@ -533,7 +576,9 @@ class SearcherInternal {
                     });
 
                     // push a missing data query here
-                    matchingRangeQueries.push(this.missingQuery(facetConfig.field));
+                    if (facetConfig.includeMissing) {
+                        matchingRangeQueries.push(this.missingQuery(facetConfig.field));
+                    }
 
                     const query = this.boolShouldQueries(matchingRangeQueries);
                     if (query) {
@@ -1383,7 +1428,7 @@ class SearcherInternal {
               const results = [];
               _.forEach(responses, response => {
                   if (response) {
-                      results.add(response);
+                      results.push(response);
                       totalResults += _.get(response, 'totalResults', 0);
                   }
               });
