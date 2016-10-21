@@ -433,12 +433,6 @@ class SearcherInternal {
                 filterValue = input.filter[key];
             } else if (filterConfig.defaultValue) {
                 filterValue = filterConfig.defaultValue;
-            } else if (filterValue.range) {
-                filterValue = filterValue.range;
-                range = true;
-            } else if (filterValue.ranges) {
-                filterValue = filterValue.ranges;
-                range = true;
             }
 
             if (filterValue && filterValue !== '__all__' && _.isObject(filterValue)) {
@@ -447,6 +441,12 @@ class SearcherInternal {
                     filterValue = filterValue.value;
                 } else if (filterValue.values) {
                     filterValue = filterValue.values;
+                } else if (filterValue.range) {
+                    filterValue = filterValue.range;
+                    range = true;
+                } else if (filterValue.ranges) {
+                    filterValue = filterValue.ranges;
+                    range = true;
                 }
 
                 if (filterType && filterType === 'facet') {
