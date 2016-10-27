@@ -124,9 +124,9 @@ export default class ESClient {
 
         return Promise.resolve(queryOrPromise)
           .then(query => {
-              const uri = `/${query.index}/${query.type}/_search`;
+              const uri = !query.type ? `/${query.index}/_search` : `/${query.index}/${query.type}/_search`;
 
-              // console.log('search: ', uri, JSON.stringify(query.search));
+              console.log('search: ', uri, JSON.stringify(query.search));
 
               const queryKey = md5(JSON.stringify(query.search));
               const cacheKey = `${uri}:${queryKey}`;

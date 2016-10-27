@@ -412,6 +412,10 @@ class SearcherInternal {
         };
     }
 
+    isValidValue(value) {
+        return !_.isUndefined(value) && !_.isNull(value);
+    }
+
     filterQueries(searchTypeConfig, input, termLanguages, intentIndex, intentFields) {
         const filterConfigs = searchTypeConfig.filters || searchTypeConfig.indexType.filters;
 
@@ -429,24 +433,28 @@ class SearcherInternal {
 
             let filterValue = null;
             let range = false;
-            if (input.filter && input.filter[key]) {
+            if (input.filter && this.isValidValue(input.filter[key])) {
                 filterValue = input.filter[key];
             } else if (filterConfig.defaultValue) {
                 filterValue = filterConfig.defaultValue;
             }
 
-            if (filterValue && filterValue !== '__all__' && _.isObject(filterValue)) {
-                const filterType = filterValue.type;
-                if (filterValue.value) {
-                    filterValue = filterValue.value;
-                } else if (filterValue.values) {
-                    filterValue = filterValue.values;
-                } else if (filterValue.range) {
-                    filterValue = filterValue.range;
-                    range = true;
-                } else if (filterValue.ranges) {
-                    filterValue = filterValue.ranges;
-                    range = true;
+            if (this.isValidValue(filterValue) && filterValue !== '__all__') {
+                let filterType = null;
+
+                if (_.isObject(filterValue)) {
+                    filterType = filterValue.type;
+                    if (filterValue.value) {
+                        filterValue = filterValue.value;
+                    } else if (filterValue.values) {
+                        filterValue = filterValue.values;
+                    } else if (filterValue.range) {
+                        filterValue = filterValue.range;
+                        range = true;
+                    } else if (filterValue.ranges) {
+                        filterValue = filterValue.ranges;
+                        range = true;
+                    }
                 }
 
                 if (filterType && filterType === 'facet') {
@@ -846,62 +854,74 @@ class SearcherInternal {
         return facets;
     }
 
-    searchQuery(searchTypeConfig, input, intentIndex, intentFields) {
-        let text = input.text;
+    _searchQueryInternal(index, query, page, size, queryLanguages, type, sort, facets, postFilter) {
+        // const indexTypeConfig = searchTypeConfig.indexType;
+        //
+        // let sort = this.sortPart(searchTypeConfig, input) || undefined;
+        // if (sort && _.isEmpty(sort)) {
+        //     sort = undefined;
+        // }
+        //
+        // let facets = this.facetsPart(searchTypeConfig) || undefined;
+        // if (facets && _.isEmpty(facets)) {
+        //     facets = undefined;
+        // }
 
-        if ((this.instanceName === '1mg' || this.instanceName === 'netmeds') && text) {
-            // fix text
-            text = _(text)
-              .replace(/(^|[\s]|[^0-9]|[^a-z])([0-9]+)[\s]+(mg|mcg|ml|%)/gi, '$1$2$3')
-              .replace(/(^|[\s]|[^0-9]|[^a-z])\.([0-9]+)[\s]*(mg|mcg|ml|%)/gi, '$10.$2$3')
-              .replace(/([0-9]+)'S$/gi, '$1S')
-              .trim();
+        return {
+            index,
+            type,
+            search: {
+                from: (page || 0) * (size || 0),
+                size,
+                sort,
+                query: {
+                    function_score: {
+                        query,
+                        field_value_factor: {
+                            field: '_weight',
+                            factor: 2.0,
+                            missing: 1
+                        }
+                    }
+                },
+                post_filter: postFilter,
+                aggs: facets
+            },
+            queryLanguages
+        };
+    }
+
+    searchQuery(searchTypeConfig, input, intentIndex, intentFields, query, queryLanguages) {
+        const indexTypeConfig = searchTypeConfig.indexType;
+
+        let sort = this.sortPart(searchTypeConfig, input) || undefined;
+        if (sort && _.isEmpty(sort)) {
+            sort = undefined;
         }
 
-        return Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
-          .then(({query, queryLanguages}) => {
-              const indexTypeConfig = searchTypeConfig.indexType;
+        let facets = this.facetsPart(searchTypeConfig) || undefined;
+        if (facets && _.isEmpty(facets)) {
+            facets = undefined;
+        }
 
-              let sort = this.sortPart(searchTypeConfig, input) || undefined;
-              if (sort && _.isEmpty(sort)) {
-                  sort = undefined;
+        const filter = this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages), intentIndex, intentFields);
+
+        return this._searchQueryInternal(
+          indexTypeConfig.index,
+          {
+              bool: {
+                  must: query || {match_all: {}},
+                  filter
               }
-
-              let facets = this.facetsPart(searchTypeConfig) || undefined;
-              if (facets && _.isEmpty(facets)) {
-                  facets = undefined;
-              }
-
-              return {
-                  index: indexTypeConfig.index,
-                  type: indexTypeConfig.type,
-                  search: {
-                      from: (input.page || 0) * (input.count || 0),
-                      size: input.count || undefined,
-                      sort,
-                      query: {
-                          function_score: {
-                              query: {
-                                  bool: {
-                                      must: query || {
-                                          match_all: {}
-                                      },
-                                      filter: this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages), intentIndex, intentFields)
-                                  }
-                              },
-                              field_value_factor: {
-                                  field: '_weight',
-                                  factor: 2.0,
-                                  missing: 1
-                              }
-                          }
-                      },
-                      post_filter: this.facetQueries(searchTypeConfig, input, intentIndex, intentFields),
-                      aggs: facets
-                  },
-                  queryLanguages
-              };
-          });
+          },
+          input.page || 0,
+          input.count,
+          queryLanguages,
+          indexTypeConfig.type,
+          sort,
+          facets,
+          this.facetQueries(searchTypeConfig, input, intentIndex, intentFields)
+        );
     }
 
     _deepOmit(source) {
@@ -927,7 +947,7 @@ class SearcherInternal {
         return source;
     }
 
-    _processSource(hit, name) {
+    _processSource(hit/*, name*/) {
         if (!hit._source) {
             return null;
         }
@@ -944,29 +964,27 @@ class SearcherInternal {
           })
           .value();
 
-        return _.defaults(_.pick(hit, ['_id', '_score', '_type', '_weight']), {_name: name}, source);
+        return _.defaults(_.pick(hit, ['_id', '_score', '_type', '_weight']), /*{_name: name},*/ source);
     }
 
     _processResponse(response, searchTypesConfig, type) {
         // let type = null;
-        let name = null;
-
-        // console.log('========> Process Response Type: ', type, searchTypesConfig);
+        // let name = null;
 
         const results = [];
 
         if (response.hits && response.hits.hits) {
-            let first = true;
+            // let first = true;
             _.forEach(response.hits.hits, hit => {
-                if (first || !type) {
-                    type = hit._type;
-                    const typeConfig = this.searchConfig.types[type];
-                    name = (typeConfig && (typeConfig.name || typeConfig.type)) || type;
+                // if (first || !type) {
+                //     type = hit._type;
+                //     const typeConfig = this.searchConfig.types[type];
+                //     name = (typeConfig && (typeConfig.name || typeConfig.type)) || type;
+                //
+                //     first = false;
+                // }
 
-                    first = false;
-                }
-
-                results.push(this._processSource(hit, name));
+                results.push(this._processSource(hit /*, name*/));
             });
         }
 
@@ -1057,7 +1075,7 @@ class SearcherInternal {
             });
         }
 
-        return {type, name, resultType: type, results, summaries, facets, queryTimeTaken: response.took, totalResults: _.get(response, 'hits.total', 0)};
+        return {type, /*name,*/ resultType: type, results, summaries, facets, queryTimeTaken: response.took, totalResults: _.get(response, 'hits.total', 0)};
     }
 
     processMultipleSearchResponse(responses, searchTypesConfig, types, input) {
@@ -1068,7 +1086,7 @@ class SearcherInternal {
         const mergedResult = {
             multi: true,
             totalResults: 0,
-            results: {},
+            results: {}, // todo: better pass these as array of results
             searchText: input.text,
             filter: input.filter,
             sort: input.sort,
@@ -1102,6 +1120,26 @@ class SearcherInternal {
 
         const finalResponse = this._processResponse(response, searchTypesConfig, type);
 
+        if (input.bareResponse) {
+            return finalResponse;
+        }
+
+        return _.extend(finalResponse, {
+            searchText: input.text,
+            filter: input.filter,
+            sort: input.sort,
+            page: input.page,
+            count: finalResponse && finalResponse.results && finalResponse.results.length
+        });
+    }
+
+    processFlatSearchResponse(response, searchTypesConfig, input) {
+        if (!response) {
+            return null;
+        }
+
+        const finalResponse = this._processResponse(response, searchTypesConfig);
+
         return _.extend(finalResponse, {
             searchText: input.text,
             filter: input.filter,
@@ -1112,9 +1150,8 @@ class SearcherInternal {
     }
 
     _searchInternal(headers, input, searchApiConfig, eventName) {
-        let queryLanguages = null;
-
         let multiSearch = false;
+        let flat = false;
 
         let promise = null;
 
@@ -1123,6 +1160,20 @@ class SearcherInternal {
         let responsePostProcessor = null;
 
         let typeOrTypesArray = null;
+
+        let text = input.text;
+
+        if ((this.instanceName === '1mg' || this.instanceName === 'netmeds') && text) {
+            // fix text
+            text = _(text)
+              .replace(/(^|[\s]|[^0-9]|[^a-z])([0-9]+)[\s]+(mg|mcg|ml|%)/gi, '$1$2$3')
+              .replace(/(^|[\s]|[^0-9]|[^a-z])\.([0-9]+)[\s]*(mg|mcg|ml|%)/gi, '$10.$2$3')
+              .replace(/([0-9]+)'S$/gi, '$1S')
+              .trim();
+        }
+
+        // return Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
+        //   .then(({query, queryLanguages}) => {
 
         const intentIndex = `${_.toLower(this.instanceName)}:intent_store`;
         let intentFields = [];
@@ -1139,14 +1190,44 @@ class SearcherInternal {
 
             intentFields = _.uniq(intentFields);
 
-            const searchQueries = _(searchTypeConfigs)
-              .values()
-              .map(typeConfig => this.searchQuery(typeConfig, input, intentIndex, intentFields))
-              .value();
+            if (searchApiConfig.flat) {
+                const searchQueries = _(searchTypeConfigs)
+                  .values()
+                  .map(typeConfig =>
+                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentIndex, intentFields))
+                      .then(({query}) => ({
+                          bool: {
+                              must: [
+                                  query,
+                                  {
+                                      term: {
+                                          _type: {
+                                              value: typeConfig.indexType.type
+                                          }
+                                      }
+                                  }
+                              ]
+                          }
+                      })))
+                  .value();
 
-            multiSearch = _.isArray(searchQueries) || false;
+                multiSearch = false;
+                flat = true;
 
-            promise = Promise.all(searchQueries);
+                promise = Promise.all(searchQueries)
+                  .then((queries) => this._searchQueryInternal(`${_.toLower(this.instanceName)}_store`, {bool: {should: queries}}, input.page, input.count || 10));
+            } else {
+                const searchQueries = _(searchTypeConfigs)
+                  .values()
+                  .map(typeConfig =>
+                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentIndex, intentFields))
+                      .then(({query, queryLanguages}) => this.searchQuery(typeConfig, input, intentIndex, intentFields, query, queryLanguages)))
+                  .value();
+
+                multiSearch = _.isArray(searchQueries) || false;
+
+                promise = Promise.all(searchQueries);
+            }
         } else {
             const searchTypeConfig = searchTypeConfigs[input.type];
 
@@ -1161,8 +1242,13 @@ class SearcherInternal {
 
             intentFields = _.uniq(intentFields);
 
-            promise = this.searchQuery(searchTypeConfig, input, intentIndex, intentFields);
+            promise = Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
+              .then(({query, queryLanguages}) => this.searchQuery(searchTypeConfig, input, intentIndex, intentFields, query, queryLanguages));
+
+            // promise = this.searchQuery(searchTypeConfig, input, intentIndex, intentFields);
         }
+
+        let queryLanguages = null;
 
         return Promise.resolve(promise)
           .then(queryOrArray => {
@@ -1184,6 +1270,10 @@ class SearcherInternal {
           .then((response) => {
               if (multiSearch) {
                   return this.processMultipleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
+              }
+
+              if (flat) {
+                  return this.processFlatSearchResponse(response, searchTypeConfigs, input);
               }
 
               return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
@@ -1416,9 +1506,9 @@ class SearcherInternal {
 
     }
 
-    buildSection(sectionResponseOrPromise, sectionName, sectionType, sectionTitle) {
+    buildSection(sectionResponseOrPromise, sectionName, resultType, sectionTitle) {
         return Promise.resolve(sectionResponseOrPromise)
-          .then(response => (_.defaults({type: 'section', name: sectionName, title: sectionTitle, resultType: sectionType}, response)));
+          .then(response => (_.defaults({type: 'section', name: sectionName, title: sectionTitle, resultType}, response)));
     }
 
     composeSections(...sections) {
@@ -1617,117 +1707,8 @@ class SearcherInternal {
         const validatedInput = this.validateInput(input, this.apiSchema.search);
 
         if (this.instanceName === 'carDekho' && (!validatedInput.type || validatedInput.type === '*')) {
-            // if (validatedInput.text === 'brand-single') {
-            //     // model search for brand
-            //     // used car search for brand
-            //     // news search for brand
-            //     // new car dealers for brand
-            //     // used car dealers for brand
-            //     // service centers for brand
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         models: this.browseAll(headers, {type: 'new_car_model'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'brand-multi') {
-            //     // matching brands
-            //     // used car search for matching brands
-            //     // news search for matching brands
-            //     // new car dealers for matching brands
-            //     // used car dealers for matching brands
-            //     // service centers for matching brands
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         'matching-brands': this.browseAll(headers, {type: 'new_car_brand'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'model-single') {
-            //     // matching single model
-            //     // variants for matching model
-            //     // used cars for matching model or brand of the matching model
-            //     // news for matching model or brand of the matching model
-            //     // new car dealers for brand of the matching model
-            //     // used car dealers for brand of the matching model
-            //     // service centers for brand of brand of the matching model
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         model: this.browseAll(headers, {type: 'new_car_model', count: 1}),
-            //         variants: this.browseAll(headers, {type: 'new_car_variant'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'model-multi') {
-            //     // matching models
-            //     // used cars for matching models or brand of the matching models
-            //     // news for matching models or brand of the matching models
-            //     // new car dealers for brand of the matching models
-            //     // used car dealers for brand of the matching models
-            //     // service centers for brand of brand of the matching models
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         'matching-models': this.browseAll(headers, {type: 'new_car_model'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'variant-single') {
-            //     // matching single variant
-            //     // similar variants
-            //     // used cars for models of the matching variant
-            //     // news for models of the matching variant
-            //     // new car dealers for brand of the matching variant
-            //     // used car dealers for brand of the matching variant
-            //     // service centers for brand of brand of the matching variant
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         variant: this.browseAll(headers, {type: 'new_car_model', count: 1}),
-            //         'similar-variants': this.browseAll(headers, {type: 'new_car_variant'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'variant-multi') {
-            //     // matching variants
-            //     // used cars for models of the matching variants
-            //     // news for models of the matching variants
-            //     // new car dealers for brand of the matching variants
-            //     // used car dealers for brand of the matching variants
-            //     // service centers for brand of brand of the matching variants
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         'matching-variants': this.browseAll(headers, {type: 'new_car_variant'}),
-            //         'used-cars': this.browseAll(headers, {type: 'used_car'}),
-            //         news: this.browseAll(headers, {type: 'car_news'}),
-            //         'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'})
-            //         // 'used-car-dealers': this.browseAll(headers, {type: 'used_car_dealer'})
-            //         // 'service-centers': this.browseAll(headers, {type: 'service_center'})
-            //     });
-            // } else if (validatedInput.text === 'model-link-single') {
-            //     // single matching link
-            //     // related links
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         link: this.browseAll(headers, {type: 'new_car_model_page', count: 1}),
-            //         'related-links': this.browseAll(headers, {type: 'new_car_model_page'})
-            //     });
-            // } else if (validatedInput.text === 'model-link-multi') {
-            //     // matching links
-            //     return this.buildSearchSections(validatedInput.text, {
-            //         'matching-links': this.browseAll(headers, {type: 'new_car_model_page'})
-            //     });
-            // }
-
             return Promise.resolve(this._intentInternal(headers, input, this.searchConfig.search))
               .then(response => {
-                  // console.log('Intent Response: ', JSON.stringify(response, null, 2));
                   if (_.isEmpty(response.results)) {
                       return this.formatMultiResponseIntoSections(this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT));
                   }
@@ -1742,6 +1723,23 @@ class SearcherInternal {
                   // make a query for brand, model, or variant
                   return this.carDekhoIntentBasedSearch(intentSuggestions, headers, validatedInput, this.searchConfig.search);
               });
+        } else if (this.instanceName === 'netmeds' && (!validatedInput.section || validatedInput.section === '*')) {
+            // create two queries (a) for prescribed (b) for non-prescribed
+            // combine them in sections
+            return this.composeSections(
+              this.buildSection(this._searchInternal(headers, _.defaultsDeep({
+                  bareResponse: true,
+                  filter: {prescription: true}
+              }, validatedInput), this.searchConfig.search, Constants.SEARCH_EVENT), 'prescription', 'product', 'PRESCRIPTION'),
+              this.buildSection(this._searchInternal(headers, _.defaultsDeep({
+                  bareResponse: true,
+                  filter: {prescription: false}
+              }, validatedInput), this.searchConfig.search, Constants.SEARCH_EVENT), 'non_prescription', 'product', 'NON PRESCRIPTIONS')
+            );
+        } else if (this.instanceName === 'netmeds' && validatedInput.section === 'prescription') {
+            return this._searchInternal(headers, _.defaultsDeep({filter: {prescription: true}}, validatedInput), this.searchConfig.search, Constants.SEARCH_EVENT);
+        } else if (this.instanceName === 'netmeds' && validatedInput.section === 'non_prescription') {
+            return this._searchInternal(headers, _.defaultsDeep({filter: {prescription: false}}, validatedInput), this.searchConfig.search, Constants.SEARCH_EVENT);
         }
 
         return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);

@@ -52,7 +52,11 @@ export default function (searchConfig) {
           .unknown(true)
           .optional(),
         unicodeText: Joi.string().allow([null, '']).optional(),
-        originalInput: Joi.string().min(1).allow(null)
+        originalInput: Joi.string().min(1).allow(null),
+        section: Joi.string()
+          .allow([null, '*'])
+          .default('*')
+          .optional()
     });
 
     const formSearchSchema = _.extend({}, baseSchema, {
