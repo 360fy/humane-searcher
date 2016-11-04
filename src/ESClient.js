@@ -126,7 +126,7 @@ export default class ESClient {
           .then(query => {
               const uri = !query.type ? `/${query.index}/_search` : `/${query.index}/${query.type}/_search`;
 
-              console.log('search: ', uri, JSON.stringify(query.search));
+              // console.log('search: ', uri, JSON.stringify(query.search));
 
               const queryKey = md5(JSON.stringify(query.search));
               const cacheKey = `${uri}:${queryKey}`;
@@ -144,6 +144,7 @@ export default class ESClient {
                     return this.request({method: 'POST', uri, body: query.search})
                       .then((response) => Request.handleResponse(response))
                       .then(queryResponse => {
+                          console.log('search: in (ms): ', _.round(performanceNow() - startTime, 3));
                           if (queryResponse) {
                               return this.storeInCache(cacheKey, queryResponse);
                           }
@@ -190,6 +191,7 @@ export default class ESClient {
               return this.request({method: 'GET', uri})
                 .then((response) => Request.handleResponse(response))
                 .then(getResponse => {
+                    console.log('get: in (ms): ', _.round(performanceNow() - startTime, 3));
                     if (getResponse) {
                         return this.storeInCache(cacheKey, getResponse);
                     }
@@ -243,6 +245,7 @@ export default class ESClient {
               return this.request({method: 'POST', uri, body: query})
                 .then((response) => Request.handleResponse(response))
                 .then(queryResponse => {
+                    console.log('intent: in (ms): ', _.round(performanceNow() - startTime, 3));
                     if (queryResponse) {
                         return this.storeInCache(cacheKey, queryResponse);
                     }
@@ -263,7 +266,7 @@ export default class ESClient {
           .then((queries) => {
               const uri = '/_msearch';
 
-              console.log('multiSearch: ', JSON.stringify(queries));
+              // console.log('multiSearch: ', JSON.stringify(queries));
 
               const bulkQuery = ESClient.bulkFormat(queries);
 
@@ -296,6 +299,7 @@ export default class ESClient {
                           return null;
                       })
                       .then(queryResponse => {
+                          console.log('multiSearch: in (ms): ', _.round(performanceNow() - startTime, 3));
                           if (queryResponse) {
                               return this.storeInCache(cacheKey, queryResponse);
                           }

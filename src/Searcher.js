@@ -112,7 +112,7 @@ class SearcherInternal {
         this.eventEmitter = new EventEmitter();
 
         // this.registerEventHandlers(DefaultEventHandlers);
-        this.registerEventHandlers(config.searchConfig.eventHandlers);
+        // this.registerEventHandlers(config.searchConfig.eventHandlers);
     }
 
     enhanceSearchTypes(types, searchConfig) {
@@ -964,7 +964,7 @@ class SearcherInternal {
           })
           .value();
 
-        return _.defaults(_.pick(hit, ['_id', '_score', '_type', '_weight']), /*{_name: name},*/ source);
+        return _.defaults(_.pick(hit, ['_id', '_score', '_type', '_weight', '_version']), /*{_name: name},*/ source);
     }
 
     _processResponse(response, searchTypesConfig, type) {
@@ -1087,25 +1087,23 @@ class SearcherInternal {
             multi: true,
             totalResults: 0,
             results: {}, // todo: better pass these as array of results
-            searchText: input.text,
-            filter: input.filter,
-            sort: input.sort,
-            page: input.page,
+            searchText: input && input.text,
+            filter: input && input.filter,
+            sort: input && input.sort,
+            page: input && input.page,
             count: 0
         };
 
         _.forEach(responses.responses, (response, index) => {
             const type = types && _.isArray(types) && types.length > index && types[index];
-            const result = this._processResponse(response,
-              searchTypesConfig,
-              type);
+            const result = this._processResponse(response, searchTypesConfig, type);
 
-            if (!result || !result.type || !result.name || !result.results || result.results.length === 0) {
+            if (!result || !result.type || /*!result.name ||*/ !result.results || result.results.length === 0) {
                 return;
             }
 
             mergedResult.queryTimeTaken = Math.max(mergedResult.queryTimeTaken || 0, result.queryTimeTaken);
-            mergedResult.results[result.name] = result;
+            mergedResult.results[result.type] = result;
             mergedResult.totalResults += result.totalResults;
             mergedResult.count += result && result.length;
         });
@@ -1330,7 +1328,7 @@ class SearcherInternal {
 
         const intentQuery = {query, lookupEntities};
 
-        console.log('Intent Query: ', JSON.stringify(intentQuery, null, 2));
+        // console.log('Intent Query: ', JSON.stringify(intentQuery, null, 2));
 
         // form the request and get a response
         return Promise.resolve(this.esClient.intent(intentIndex, intentQuery));
@@ -1451,39 +1449,46 @@ class SearcherInternal {
         return this.buildIntentSuggestionQuery(intentSuggestionList[0], field);
     }
 
-    executeIntentSuggestionListQuery(intentSuggestionList, type, field) {
-        return Promise.resolve(this.esClient.search({
+    intentSuggestionListQuery(intentSuggestionList, type, field) {
+        // return Promise.resolve(this.esClient.search({
+        //     index: `${_.toLower(this.instanceName)}_store`,
+        //     type,
+        //     search: {
+        //         query: this.buildIntentSuggestionListQuery(intentSuggestionList, field)
+        //     }
+        // }))
+        //   .then(response => this._processResponse(response, this.searchConfig.search.types, type));
+        return {
             index: `${_.toLower(this.instanceName)}_store`,
             type,
             search: {
                 query: this.buildIntentSuggestionListQuery(intentSuggestionList, field)
             }
-        }))
-          .then(response => this._processResponse(response, this.searchConfig.search.types, type));
+        };
     }
 
     searchCarDekhoBrand(intentSuggestions) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_brand', 'brand');
+        return this.intentSuggestionListQuery(intentSuggestions, 'new_car_brand', 'brand');
     }
 
     searchCarDekhoModel(intentSuggestions) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_model', 'model');
+        return this.intentSuggestionListQuery(intentSuggestions, 'new_car_model', 'model');
     }
 
     searchCarDekhoVariant(intentSuggestions) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_variant', 'variant');
+        return this.intentSuggestionListQuery(intentSuggestions, 'new_car_variant', 'variant');
     }
 
     searchUsedCarsByIntentSuggestions(intentSuggestions, field) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'used_car', field);
+        return this.intentSuggestionListQuery(intentSuggestions, 'used_car', field);
     }
 
     searchNewsByIntentSuggestions(intentSuggestions, field) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'car_news', field);
+        return this.intentSuggestionListQuery(intentSuggestions, 'car_news', field);
     }
 
     searchNewCarDealersByIntentSuggestions(intentSuggestions, field) {
-        return this.executeIntentSuggestionListQuery(intentSuggestions, 'new_car_dealer', field);
+        return this.intentSuggestionListQuery(intentSuggestions, 'new_car_dealer', field);
     }
 
     searchUsedCarsByMatchingBrands() {
@@ -1541,19 +1546,26 @@ class SearcherInternal {
           ));
     }
 
+    _multiSearch(queries) {
+        return Promise.resolve(this.esClient.multiSearch(queries))
+          .then(response => this.processMultipleSearchResponse(response, this.searchConfig.search.types, _.map(queries, obj => obj.type)));
+    }
+
     carDekhoIntentBasedSearch(intentSuggestions, headers, input, searchApiConfig) {
-        return Promise.props({
-            brand: this.searchCarDekhoBrand(intentSuggestions),
-            model: this.searchCarDekhoModel(intentSuggestions),
-            variant: this.searchCarDekhoVariant(intentSuggestions)
-        })
+        const typeDecipherQueries = [
+            this.searchCarDekhoBrand(intentSuggestions),
+            this.searchCarDekhoModel(intentSuggestions),
+            this.searchCarDekhoVariant(intentSuggestions)
+        ];
+
+        return Promise.resolve(this._multiSearch(typeDecipherQueries))
           .then(response => {
               // check if brand result and how many
               // else check if model result and how many
               // else check if variant results and how many
-              const brandHits = _.get(response, 'brand.totalResults', 0);
-              const modelHits = _.get(response, 'model.totalResults', 0);
-              const variantHits = _.get(response, 'variant.totalResults', 0);
+              const brandHits = _.get(response, 'results.new_car_brand.totalResults', 0);
+              const modelHits = _.get(response, 'results.new_car_model.totalResults', 0);
+              const variantHits = _.get(response, 'results.new_car_variant.totalResults', 0);
 
               let searchType = null;
               if (brandHits) {
@@ -1586,38 +1598,34 @@ class SearcherInternal {
                   // news search for brand
                   // new car dealers for brand
 
-                  // return this.buildSearchSections(validatedInput.text, {
-                  //     models: this.browseAll(headers, {type: 'new_car_model'}), // use existing results for models
-                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make simple query with intentSuggestions, field = brand
-                  //     news: this.browseAll(headers, {type: 'car_news'}), // make simple query with intentSuggestions, field = brand
-                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make simple query with intentSuggestions, field = brand
-                  // });
-
-                  return this.composeSections(
-                    this.buildSection(response.model, 'models', 'new_car_model', 'New Cars'),
-                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'), 'used-cars', 'used_car', 'Used Cars'),
-                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'news', 'car_news', 'News'),
-                    this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-                  );
+                  return Promise.resolve(this._multiSearch([
+                      this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'),
+                      this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'),
+                      this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+                  ]))
+                    .then(sectionResponses => this.composeSections(
+                      this.buildSection(_.get(response, 'results.new_car_model'), 'models', 'new_car_model', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                    ));
               } else if (searchType === 'brand-multi') {
                   // matching brands
                   // used car search for matching brands
                   // news search for matching brands
                   // new car dealers for matching brands
 
-                  // return this.buildSearchSections(validatedInput.text, {
-                  //     'matching-brands': this.browseAll(headers, {type: 'new_car_brand'}), // use existing results for brands
-                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make simple query with intentSuggestions, field = brand
-                  //     news: this.browseAll(headers, {type: 'car_news'}), // make simple query with intent suggestions, field = brand
-                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make simple query with intent suggestions, field = brand
-                  // });
-
-                  return this.composeSections(
-                    this.buildSection(response.brand, 'matching-brands', 'new_car_brand', 'Matching Brands'),
-                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'), 'used-cars', 'used_car', 'Used Cars'),
-                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'), 'news', 'car_news', 'News'),
-                    this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-                  );
+                  return Promise.resolve(this._multiSearch([
+                      this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'),
+                      this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'),
+                      this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+                  ]))
+                    .then(sectionResponses => this.composeSections(
+                      this.buildSection(_.get(response, 'results.new_car_brand'), 'matching-brands', 'new_car_brand', 'Matching Brands'),
+                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                    ));
               } else if (searchType === 'model-single') {
                   // matching single model
                   // variants for matching model
@@ -1625,40 +1633,35 @@ class SearcherInternal {
                   // news for matching model or brand of the matching model
                   // new car dealers for brand of the matching model
 
-                  // return this.buildSearchSections(validatedInput.text, {
-                  //     model: this.browseAll(headers, {type: 'new_car_model', count: 1}), // use existing results for models
-                  //     variants: this.browseAll(headers, {type: 'new_car_variant'}), // use existing results for variants
-                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for intent suggestions (field = model) or brand output
-                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for intent suggestions (field = model) or brand output (field = brand)
-                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
-                  // });
-
-                  return this.composeSections(
-                    this.buildSection(response.model, 'model', 'new_car_model', 'Matching Model'),
-                    this.buildSection(response.variant, 'variants', 'new_car_variant', 'New Cars'),
-                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
-                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
-                    this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-                  );
+                  return Promise.resolve(this._multiSearch([
+                      this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+                  ]))
+                    .then(sectionResponses => this.composeSections(
+                      this.buildSection(_.get(response, 'results.new_car_model'), 'model', 'new_car_model', 'Matching Model'),
+                      this.buildSection(_.get(response, 'results.new_car_variant'), 'variants', 'new_car_variant', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                    ));
               } else if (searchType === 'model-multi') {
                   // matching models
                   // used cars for matching models or brand of the matching models
                   // news for matching models or brand of the matching models
                   // new car dealers for brand of the matching models
 
-                  // return this.buildSearchSections(validatedInput.text, {
-                  //     'matching-models': this.browseAll(headers, {type: 'new_car_model'}), // use existing results for models
-                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for intent suggestions (field = model) or brand output
-                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for intent suggestions (field = model) or brand output (field = brand)
-                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
-                  // });
-
-                  return this.composeSections(
-                    this.buildSection(response.model, 'matching-models', 'new_car_model', 'Matching Models'),
-                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
-                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
-                    this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-                  );
+                  return Promise.resolve(this._multiSearch([
+                      this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+                  ]))
+                    .then(sectionResponses => this.composeSections(
+                      this.buildSection(_.get(response, 'results.new_car_model'), 'matching-models', 'new_car_model', 'Matching Models'),
+                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                    ));
               } else if (searchType === 'variant-single') {
                   // matching single variant
                   // similar variants
@@ -1666,39 +1669,34 @@ class SearcherInternal {
                   // news for models of the matching variant
                   // new car dealers for brand of the matching variant
 
-                  // return this.buildSearchSections(validatedInput.text, {
-                  //     variant: this.browseAll(headers, {type: 'new_car_model', count: 1}), // use existing results for variants
-                  //     'similar-variants': this.browseAll(headers, {type: 'new_car_variant'}), // do not do it now
-                  //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for model output (field = model)
-                  //     news: this.browseAll(headers, {type: 'car_news'}), // make search for model output (field = model)
-                  //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
-                  // });
-
-                  return this.composeSections(
-                    this.buildSection(response.variant, 'variant', 'new_car_variant', 'Matching Variant'),
-                    this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
-                    this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
-                    this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-                  );
+                  return Promise.resolve(this._multiSearch([
+                      this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
+                      this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+                  ]))
+                    .then(sectionResponses => this.composeSections(
+                      this.buildSection(_.get(response, 'results.new_car_variant'), 'variant', 'new_car_variant', 'Matching Variant'),
+                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                    ));
               } //else /*if (searchType === 'variant-multi')*/ {
               // matching variants
               // used cars for models of the matching variants
               // news for models of the matching variants
               // new car dealers for brand of the matching variants
 
-              // return this.buildSearchSections(validatedInput.text, {
-              //     'matching-variants': this.browseAll(headers, {type: 'new_car_variant'}), // use existing results for variants
-              //     'used-cars': this.browseAll(headers, {type: 'used_car'}), // make search for model output (field = model)
-              //     news: this.browseAll(headers, {type: 'car_news'}), // make search for model output (field = model)
-              //     'new-car-dealers': this.browseAll(headers, {type: 'new_car_dealer'}) // make search for brand output (field = brand)
-              // });
-
-              return this.composeSections(
-                this.buildSection(response.variant, 'matching-variants', 'new_car_variant', 'Matching Variants'),
-                this.buildSection(this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'), 'used-cars', 'used_car', 'Used Cars'),
-                this.buildSection(this.searchNewsByIntentSuggestions(intentSuggestions, 'model'), 'news', 'car_news', 'News'),
-                this.buildSection(this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-              );
+              return Promise.resolve(this._multiSearch([
+                  this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
+                  this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
+                  this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
+              ]))
+                .then(sectionResponses => this.composeSections(
+                  this.buildSection(_.get(response, 'results.new_car_variant'), 'matching-variants', 'new_car_variant', 'Matching Variants'),
+                  this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
+                  this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
+                  this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                ));
               //}
           });
     }
@@ -1726,6 +1724,7 @@ class SearcherInternal {
         } else if (this.instanceName === 'netmeds' && (!validatedInput.section || validatedInput.section === '*')) {
             // create two queries (a) for prescribed (b) for non-prescribed
             // combine them in sections
+            // TODO: convert this to multi query
             return this.composeSections(
               this.buildSection(this._searchInternal(headers, _.defaultsDeep({
                   bareResponse: true,
