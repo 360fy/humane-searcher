@@ -12,21 +12,21 @@
   "author": "Shailendra Sharma",
   "license": "LGPL",
   "dependencies": {
-    "bluebird": "3.4.1",
+    "bluebird": "3.4.6",
     "events": "1.1.1",
-    "humane-node-commons": "1.4.1",
-    "joi": "9.0.4",
-    "lodash": "4.14.0",
-    "md5": "2.1.0",
+    "humane-node-commons": "1.4.2",
+    "joi": "9.2.0",
+    "lodash": "4.17.2",
+    "md5": "2.2.1",
     "performance-now": "0.2.0"
   },
   "devDependencies": {
-    "babel-core": "6.11.4",
-    "babel-plugin-transform-runtime": "6.12.0",
+    "babel-core": "6.18.2",
+    "babel-plugin-transform-runtime": "6.15.0",
     "babel-preset-node5": "11.1.0",
-    "eslint": "3.1.1",
-    "eslint-config-360fy": "1.1.10",
-    "eslint-plugin-react": "5.2.2"
+    "eslint": "3.10.2",
+    "eslint-config-360fy": "1.1.12",
+    "eslint-plugin-react": "6.7.1"
   },
   "eslintConfig": {
     "extends": "360fy"

@@ -3,13 +3,15 @@ import _ from 'lodash';
 import Joi from 'joi';
 import Promise from 'bluebird';
 import {EventEmitter} from 'events';
-import ESClient from './ESClient';
-import * as Constants from './Constants';
-import buildApiSchema from './ApiSchemaBuilder';
-import SearchEventHandler from './SearchEventHandler';
+
 import LanguageDetector from 'humane-node-commons/lib/LanguageDetector';
 import ValidationError from 'humane-node-commons/lib/ValidationError';
 import InternalServiceError from 'humane-node-commons/lib/InternalServiceError';
+
+import ESClient from './ESClient';
+import * as Constants from './Constants';
+import buildApiSchema from './ApiSchemaBuilder';
+// import SearchEventHandler from './SearchEventHandler';
 
 const langFilter = {
     field: '_lang',
@@ -50,12 +52,12 @@ class SearcherInternal {
                     // indexType: DefaultTypes.searchQuery,
                     queryFields: [
                         {
-                            field: 'unicodeQuery',
+                            field: 'unicodeValue',
                             vernacularOnly: true,
                             weight: 10
                         },
                         {
-                            field: 'query',
+                            field: 'value',
                             weight: 9.5
                         }
                     ]
@@ -82,9 +84,9 @@ class SearcherInternal {
             }
         };
 
-        const DefaultEventHandlers = {
-            search: data => new SearchEventHandler(this.instanceName).handle(data)
-        };
+        // const DefaultEventHandlers = {
+        //     search: data => new SearchEventHandler(this.instanceName).handle(data)
+        // };
 
         const indices = config.searchConfig.indices || {};
 
@@ -115,6 +117,7 @@ class SearcherInternal {
         // this.registerEventHandlers(config.searchConfig.eventHandlers);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     enhanceSearchTypes(types, searchConfig) {
         if (!types) {
             return;
@@ -189,6 +192,7 @@ class SearcherInternal {
     //     return searchConfig;
     // }
 
+    // eslint-disable-next-line class-methods-use-this
     validateInput(input, schema) {
         if (!input) {
             throw new ValidationError('No input provided', {details: {code: 'NO_INPUT'}});
@@ -214,8 +218,9 @@ class SearcherInternal {
         return validationResult.value;
     }
 
+    // eslint-disable-next-line class-methods-use-this
     constantScoreQuery(fieldConfig, query) {
-        if (fieldConfig.filter || query && (query.humane_query || query.multi_humane_query)) {
+        if (fieldConfig.filter || (query && (query.humane_query || query.multi_humane_query))) {
             return query;
         }
 
@@ -232,6 +237,7 @@ class SearcherInternal {
         return this.constantScoreQuery(fieldConfig, fieldConfig.nestedPath ? {nested: {path: fieldConfig.nestedPath, query}} : query);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     humaneQuery(fieldConfig, text, intentIndex, intentFields) {
         return {
             humane_query: {
@@ -249,6 +255,7 @@ class SearcherInternal {
         };
     }
 
+    // eslint-disable-next-line class-methods-use-this
     termQuery(fieldConfig, text) {
         const queryType = _.isArray(text) ? 'terms' : 'term';
         return {
@@ -258,6 +265,7 @@ class SearcherInternal {
         };
     }
 
+    // eslint-disable-next-line class-methods-use-this
     boolShouldQueries(queryArray) {
         if (queryArray.length === 0) {
             return null;
@@ -275,6 +283,7 @@ class SearcherInternal {
         };
     }
 
+    // eslint-disable-next-line class-methods-use-this
     missingQuery(field) {
         return {
             bool: {
@@ -296,7 +305,7 @@ class SearcherInternal {
             }
 
             const matchingRangeQueries = [];
-            _.forEach(valueOrArrayOfValue, oneValue => {
+            _.forEach(valueOrArrayOfValue, (oneValue) => {
                 matchingRangeQueries.push({
                     range: {
                         [fieldConfig.field]: {
@@ -322,7 +331,7 @@ class SearcherInternal {
 
         if (queries) {
             if (_.isArray(query)) {
-                _.forEach(query, (singleQuery) => queries.push(singleQuery));
+                _.forEach(query, singleQuery => queries.push(singleQuery));
             } else {
                 queries.push(query);
             }
@@ -412,6 +421,7 @@ class SearcherInternal {
         };
     }
 
+    // eslint-disable-next-line class-methods-use-this
     isValidValue(value) {
         return !_.isUndefined(value) && !_.isNull(value);
     }
@@ -487,11 +497,9 @@ class SearcherInternal {
             return filterQueries[0];
         }
 
-        return {
-            and: {
-                filters: _.map(filterQueries, filter => ({query: filter}))
-            }
-        };
+        // return _.map(filterQueries, filter => ({query: filter}));
+
+        return filterQueries;
     }
 
     facetQueries(searchTypeConfig, input, intentIndex, intentFields) {
@@ -548,8 +556,8 @@ class SearcherInternal {
                         filterValue = [filterValue];
                     }
 
-                    _.forEach(filterValue, oneValue => {
-                        _.forEach(facetConfig.filters, filterFacetConfig => {
+                    _.forEach(filterValue, (oneValue) => {
+                        _.forEach(facetConfig.filters, (filterFacetConfig) => {
                             if (oneValue === filterFacetConfig.key) {
                                 matchingFilterQueries.push(filterFacetConfig.filter);
                             }
@@ -567,8 +575,8 @@ class SearcherInternal {
                         filterValue = [filterValue];
                     }
 
-                    _.forEach(filterValue, oneValue => {
-                        _.forEach(facetConfig.ranges, filterRangeConfig => {
+                    _.forEach(filterValue, (oneValue) => {
+                        _.forEach(facetConfig.ranges, (filterRangeConfig) => {
                             if (oneValue === filterRangeConfig.key) {
                                 // TODO: support nested too
                                 matchingRangeQueries.push({
@@ -606,14 +614,13 @@ class SearcherInternal {
             return facetQueries[0];
         }
 
-        return {
-            and: {
-                filters: _.map(facetQueries, filter => ({query: filter}))
-            }
-        };
+        // return _.map(facetQueries, filter => ({query: filter}));
+
+        return facetQueries;
     }
 
     // todo: see the usage of it...
+    // eslint-disable-next-line class-methods-use-this
     postFilters(searchTypeConfig, input) {
         const filterConfigs = searchTypeConfig.filters || searchTypeConfig.indexType.filters;
 
@@ -699,8 +706,8 @@ class SearcherInternal {
         // build sort
         if (input.sort && input.sort.field) {
             const matchingConfig = _.find(sortConfigs, (config) => {
-                if (_.isString(config) && config === input.sort.field
-                  || _.isObject(config) && config.field === input.sort.field) {
+                if ((_.isString(config) && config === input.sort.field)
+                  || (_.isObject(config) && config.field === input.sort.field)) {
                     return config;
                 }
 
@@ -717,6 +724,7 @@ class SearcherInternal {
         return this.buildDefaultSort(sortConfigs);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     facetAggregation(aggregationConfig) {
         return {
             [aggregationConfig.type]: {field: aggregationConfig.field}
@@ -743,7 +751,7 @@ class SearcherInternal {
             facetValue = {
                 terms: {
                     field: facetConfig.field,
-                    size: 0
+                    size: 1000 // 1000 values are enough here
                 }
             };
         } else if (facetConfig.type === 'ranges') {
@@ -754,7 +762,7 @@ class SearcherInternal {
             facetValue = {
                 range: {
                     field: facetConfig.field,
-                    ranges: _.map(facetConfig.ranges, range => {
+                    ranges: _.map(facetConfig.ranges, (range) => {
                         if (!range.key) {
                             throw new ValidationError('No range facet key defined', {details: {code: 'NO_RANGE_FACET_KEY_DEFINED', facetName: facetConfig.key, facetType: facetConfig.type}});
                         }
@@ -778,7 +786,7 @@ class SearcherInternal {
 
             const filters = {};
 
-            _.forEach(facetConfig.filters, filter => {
+            _.forEach(facetConfig.filters, (filter) => {
                 filters[filter.key] = filter.filter;
             });
 
@@ -846,7 +854,7 @@ class SearcherInternal {
             });
         }
 
-        _.forEach(facetConfigs, facetConfig => {
+        _.forEach(facetConfigs, (facetConfig) => {
             const facet = this.facet(facetConfig, searchTypeConfig.summaries);
             facets[facet.key] = facet.value;
         });
@@ -854,6 +862,7 @@ class SearcherInternal {
         return facets;
     }
 
+    // eslint-disable-next-line class-methods-use-this
     _searchQueryInternal(index, query, page, size, queryLanguages, type, sort, facets, postFilter) {
         // const indexTypeConfig = searchTypeConfig.indexType;
         //
@@ -940,7 +949,7 @@ class SearcherInternal {
 
                   return false;
               })
-              .mapValues((value) => this._deepOmit(value))
+              .mapValues(value => this._deepOmit(value))
               .value();
         }
 
@@ -975,7 +984,7 @@ class SearcherInternal {
 
         if (response.hits && response.hits.hits) {
             // let first = true;
-            _.forEach(response.hits.hits, hit => {
+            _.forEach(response.hits.hits, (hit) => {
                 // if (first || !type) {
                 //     type = hit._type;
                 //     const typeConfig = this.searchConfig.types[type];
@@ -998,7 +1007,7 @@ class SearcherInternal {
         let summaries;
         if (summaryKeys && response.aggregations) {
             summaries = {};
-            _.forEach(summaryKeys, summaryKey => {
+            _.forEach(summaryKeys, (summaryKey) => {
                 const summary = _.get(response.aggregations, [`__summary_${summaryKey}__`, 'value']);
                 if (!_.isUndefined(summary)) {
                     summaries[summaryKey] = summary;
@@ -1014,7 +1023,7 @@ class SearcherInternal {
                 facetConfigs = [facetConfigs];
             }
 
-            _.forEach(facetConfigs, facetConfig => {
+            _.forEach(facetConfigs, (facetConfig) => {
                 let facet = response.aggregations[facetConfig.key];
 
                 if (!facet) {
@@ -1042,7 +1051,7 @@ class SearcherInternal {
                         };
 
                         if (summaryKeys) {
-                            _.forEach(summaryKeys, summaryKey => {
+                            _.forEach(summaryKeys, (summaryKey) => {
                                 facetResult[summaryKey] = _.get(bucket, [summaryKey, 'value']);
                             });
                         }
@@ -1051,7 +1060,7 @@ class SearcherInternal {
                     });
                 } else {
                     // bucket is an array of objects with key and doc_count
-                    facets[facetConfig.key] = _.map(buckets, bucket => {
+                    facets[facetConfig.key] = _.map(buckets, (bucket) => {
                         const facetResult = {
                             key: bucket.key,
                             count: bucket.doc_count,
@@ -1062,7 +1071,7 @@ class SearcherInternal {
                         };
 
                         if (summaryKeys) {
-                            _.forEach(summaryKeys, summaryKey => {
+                            _.forEach(summaryKeys, (summaryKey) => {
                                 facetResult[summaryKey] = _.get(bucket, [summaryKey, 'value']);
                             });
                         }
@@ -1181,7 +1190,7 @@ class SearcherInternal {
             typeOrTypesArray = [];
             _(searchTypeConfigs)
               .values()
-              .forEach(searchTypeConfig => {
+              .forEach((searchTypeConfig) => {
                   typeOrTypesArray.push(_.get(searchTypeConfig, 'indexType.type'));
                   intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
               });
@@ -1213,7 +1222,7 @@ class SearcherInternal {
                 flat = true;
 
                 promise = Promise.all(searchQueries)
-                  .then((queries) => this._searchQueryInternal(`${_.toLower(this.instanceName)}_store`, {bool: {should: queries}}, input.page, input.count || 10));
+                  .then(queries => this._searchQueryInternal(`${_.toLower(this.instanceName)}_store`, {bool: {should: queries}}, input.page, input.count || 10));
             } else {
                 const searchQueries = _(searchTypeConfigs)
                   .values()
@@ -1249,7 +1258,7 @@ class SearcherInternal {
         let queryLanguages = null;
 
         return Promise.resolve(promise)
-          .then(queryOrArray => {
+          .then((queryOrArray) => {
               if (multiSearch) {
                   queryLanguages = _.head(queryOrArray).queryLanguages;
               } else {
@@ -1258,7 +1267,7 @@ class SearcherInternal {
 
               return queryOrArray;
           })
-          .then(queryOrArray => {
+          .then((queryOrArray) => {
               if (multiSearch) {
                   return this.esClient.multiSearch(queryOrArray);
               }
@@ -1276,7 +1285,7 @@ class SearcherInternal {
 
               return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
           })
-          .then(response => {
+          .then((response) => {
               this.eventEmitter.emit(eventName, {headers, queryData: input, queryLanguages, queryResult: response});
 
               if (responsePostProcessor && input.format === 'custom') {
@@ -1304,7 +1313,7 @@ class SearcherInternal {
         if (!input.type || input.type === '*') {
             _(searchTypeConfigs)
               .values()
-              .forEach(searchTypeConfig => {
+              .forEach((searchTypeConfig) => {
                   intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
               });
         } else {
@@ -1357,9 +1366,10 @@ class SearcherInternal {
         return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.BROWSE_ALL_EVENT);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     buildSearchSections(text, sectionQueries) {
         return Promise.props(sectionQueries)
-          .then(response => {
+          .then((response) => {
               // combine all results into one and return sections
               const finalResult = {
                   searchText: text,
@@ -1382,6 +1392,7 @@ class SearcherInternal {
           });
     }
 
+    // eslint-disable-next-line class-methods-use-this
     buildIntentTokenQuery(intentToken, weight, field) {
         let fieldSuffix = 'humane';
         if (intentToken.match_token_type === 'Bi') {
@@ -1491,37 +1502,44 @@ class SearcherInternal {
         return this.intentSuggestionListQuery(intentSuggestions, 'new_car_dealer', field);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     searchUsedCarsByMatchingBrands() {
 
     }
 
+    // eslint-disable-next-line class-methods-use-this
     searchUsedCarsByMatchingModelsOrBrands() {
 
     }
 
+    // eslint-disable-next-line class-methods-use-this
     searchNewsByMatchingBrands() {
 
     }
 
+    // eslint-disable-next-line class-methods-use-this
     searchNewsByMatchingModels() {
 
     }
 
+    // eslint-disable-next-line class-methods-use-this
     searchNewCarDealersByMatchingBrands() {
 
     }
 
+    // eslint-disable-next-line class-methods-use-this
     buildSection(sectionResponseOrPromise, sectionName, resultType, sectionTitle) {
         return Promise.resolve(sectionResponseOrPromise)
           .then(response => (_.defaults({type: 'section', name: sectionName, title: sectionTitle, resultType}, response)));
     }
 
+    // eslint-disable-next-line class-methods-use-this
     composeSections(...sections) {
         return Promise.all(sections)
-          .then(responses => {
+          .then((responses) => {
               let totalResults = 0;
               const results = [];
-              _.forEach(responses, response => {
+              _.forEach(responses, (response) => {
                   if (response) {
                       results.push(response);
                       totalResults += _.get(response, 'totalResults', 0);
@@ -1559,7 +1577,7 @@ class SearcherInternal {
         ];
 
         return Promise.resolve(this._multiSearch(typeDecipherQueries))
-          .then(response => {
+          .then((response) => {
               // check if brand result and how many
               // else check if model result and how many
               // else check if variant results and how many
@@ -1706,7 +1724,7 @@ class SearcherInternal {
 
         if (this.instanceName === 'carDekho' && (!validatedInput.type || validatedInput.type === '*')) {
             return Promise.resolve(this._intentInternal(headers, input, this.searchConfig.search))
-              .then(response => {
+              .then((response) => {
                   if (_.isEmpty(response.results)) {
                       return this.formatMultiResponseIntoSections(this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT));
                   }
@@ -1744,7 +1762,8 @@ class SearcherInternal {
         return this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT);
     }
 
-    didYouMean(headers, input) {
+    // eslint-disable-next-line class-methods-use-this
+    didYouMean(/*headers, input*/) {
         // const validatedInput = this.validateInput(input, this.apiSchema.didYouMean);
         //
         // const types = this.searchConfig.types;
@@ -1783,13 +1802,13 @@ class SearcherInternal {
         const validatedInput = this.validateInput(input, this.apiSchema.autocomplete);
 
         return this._searchInternal(headers, validatedInput, this.searchConfig.autocomplete, Constants.SUGGESTED_QUERIES_EVENT)
-          .then(response => {
+          .then((response) => {
               // merge
               if (response.multi) {
                   // calculate scores
                   const relevancyScores = [];
-                  _.forEach(response.results, resultGroup => {
-                      _.forEach(resultGroup.results, result => {
+                  _.forEach(response.results, (resultGroup) => {
+                      _.forEach(resultGroup.results, (result) => {
                           result._relevancyScore = result._score / (result._weight || 1.0);
                           relevancyScores.push(result._relevancyScore);
                       });
@@ -1801,7 +1820,7 @@ class SearcherInternal {
                   // find deflection point
                   let previousScore = 0;
                   let deflectionScore = 0;
-                  _.forEach(relevancyScores, score => {
+                  _.forEach(relevancyScores, (score) => {
                       if (previousScore && score < 0.5 * previousScore) {
                           deflectionScore = previousScore;
                           return false;
@@ -1814,8 +1833,8 @@ class SearcherInternal {
 
                   // consider items till the deflection point
                   const results = [];
-                  _.forEach(response.results, resultGroup => {
-                      _.forEach(resultGroup.results, result => {
+                  _.forEach(response.results, (resultGroup) => {
+                      _.forEach(resultGroup.results, (result) => {
                           if (result._relevancyScore >= deflectionScore) {
                               results.push(result);
                           }
@@ -1840,14 +1859,14 @@ class SearcherInternal {
         }
 
         return Promise.resolve(this.searchQuery(apiConfig.types[input.type], input))
-          .then(query => {
+          .then((query) => {
               delete query.search.from;
               delete query.search.size;
               delete query.search.sort;
               return query;
           })
           .then(query => this.esClient.explain(input.id, query))
-          .then((response) => response && response.explanation || null);
+          .then(response => (response && response.explanation) || null);
     }
 
     explainAutocomplete(headers, input) {
@@ -1864,7 +1883,7 @@ class SearcherInternal {
         const typeConfig = this.getIndexTypeConfigFromType(validatedInput.type);
 
         return Promise.resolve(this.esClient.termVectors(typeConfig.index, typeConfig.type, validatedInput.id))
-          .then((response) => response && response.term_vectors || null);
+          .then(response => (response && response.term_vectors) || null);
     }
 
     get(headers, input) {
@@ -1880,7 +1899,7 @@ class SearcherInternal {
         const typeConfig = this.getIndexTypeConfigFromType(input.type);
 
         return Promise.resolve(this.esClient.get(typeConfig.index, typeConfig.type, input.id))
-          .then((response) => response && this._processSource(response, (typeConfig && (typeConfig.name || typeConfig.type)) || input.type) || null);
+          .then(response => (response && this._processSource(response, (typeConfig && (typeConfig.name || typeConfig.type)) || input.type)) || null);
     }
 
     // TODO: create schema to validate view input
@@ -1915,7 +1934,7 @@ class SearcherInternal {
                       _.forEach(hits, (hit) => {
                           const doc = hit._source;
                           if (!postFilters || _.every(postFilters, postFilter => postFilter(doc))) {
-                              finalResponse.totalResults++;
+                              finalResponse.totalResults += 1;
                               finalResponse.results.push(doc);
                           }
                       });
@@ -1931,9 +1950,10 @@ export default class Searcher {
         this.internal = new SearcherInternal(searchConfig);
     }
 
+    // eslint-disable-next-line class-methods-use-this
     errorWrap(method, request, promise) {
         return Promise.resolve(promise)
-          .catch(error => {
+          .catch((error) => {
               console.error('>>> Error', method, request, error, error.stack);
 
               if (error && (error._errorCode === 'VALIDATION_ERROR' || error._errorCode === 'INTERNAL_SERVICE_ERROR')) {
@@ -1941,7 +1961,7 @@ export default class Searcher {
                   throw error;
               }
 
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 

@@ -32,7 +32,7 @@ export default class SearchEventHandler {
           //         console.warn('Error while sending search query: ', response.statusCode, response.body);
           //     }
           // })
-          .catch(error => {
+          .catch((error) => {
               console.warn('Error while sending search query: ', error);
           });
     }
@@ -43,7 +43,7 @@ export default class SearchEventHandler {
         let queryLanguages = data.queryLanguages;
 
         const queryTime = Date.now();
-        const hasResults = queryResult && queryResult.totalResults || false;
+        const hasResults = (queryResult && queryResult.totalResults) || false;
         const query = _.lowerCase(queryData.text);
         let unicodeQuery = null;
         
@@ -67,7 +67,7 @@ export default class SearchEventHandler {
             languages = ['en'];
         }
 
-        _.forEach(languages, lang => {
+        _.forEach(languages, (lang) => {
             const key = md5(`${lang}/${query}`);
 
             this.send({key, query, unicodeQuery, queryTime, hasResults, lang});

@@ -8,7 +8,7 @@ import InternalServiceError from 'humane-node-commons/lib/InternalServiceError';
 
 export default class ESClient {
     constructor(config) {
-        this.request = Request.builder(_.extend({}, config.esConfig, {logLevel: config.logLevel, baseUrl: config.esConfig && config.esConfig.url || 'http://localhost:9200'}));
+        this.request = Request.builder(_.extend({}, config.esConfig, {logLevel: config.logLevel, baseUrl: (config.esConfig && config.esConfig.url) || 'http://localhost:9200'}));
 
         this.redisKeyPrefix = process.env.REDIS_KEY_PREFIX;
         if (this.redisKeyPrefix) {
@@ -67,7 +67,7 @@ export default class ESClient {
 
         // console.error('Error: ', _response.body);
 
-        throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: _response.body && _response.body.error || _response.body});
+        throw new InternalServiceError('Internal Service Error', {_statusCode: _response.statusCode, details: (_response.body && _response.body.error) || _response.body});
     }
 
     // queries will be in following format:
@@ -114,8 +114,8 @@ export default class ESClient {
         }
 
         return recursiveFetch(0)
-          .catch(error => {
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          .catch((error) => {
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -123,16 +123,16 @@ export default class ESClient {
         const startTime = performanceNow();
 
         return Promise.resolve(queryOrPromise)
-          .then(query => {
+          .then((query) => {
               const uri = !query.type ? `/${query.index}/_search` : `/${query.index}/${query.type}/_search`;
 
-              // console.log('search: ', uri, JSON.stringify(query.search));
+              console.log('search: ', uri, JSON.stringify(query.search));
 
               const queryKey = md5(JSON.stringify(query.search));
               const cacheKey = `${uri}:${queryKey}`;
 
               return this.retrieveFromCache(cacheKey)
-                .then(cacheResponse => {
+                .then((cacheResponse) => {
                     if (cacheResponse) {
                         cacheResponse.took = _.round(performanceNow() - startTime, 3);
 
@@ -142,8 +142,8 @@ export default class ESClient {
                     }
 
                     return this.request({method: 'POST', uri, body: query.search})
-                      .then((response) => Request.handleResponse(response))
-                      .then(queryResponse => {
+                      .then(response => Request.handleResponse(response))
+                      .then((queryResponse) => {
                           console.log('search: in (ms): ', _.round(performanceNow() - startTime, 3));
                           if (queryResponse) {
                               return this.storeInCache(cacheKey, queryResponse);
@@ -153,9 +153,9 @@ export default class ESClient {
                       });
                 });
           })
-          .catch(error => {
+          .catch((error) => {
               console.error('Error: ', error, error.stack);
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -165,9 +165,9 @@ export default class ESClient {
         //console.log('Explain: ', uri, JSON.stringify(query.search));
 
         return this.request({method: 'POST', uri, body: query.search})
-          .then((response) => Request.handleResponse(response))
-          .catch(error => {
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          .then(response => Request.handleResponse(response))
+          .catch((error) => {
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -179,7 +179,7 @@ export default class ESClient {
         const cacheKey = md5(uri);
 
         return this.retrieveFromCache(cacheKey)
-          .then(cacheResponse => {
+          .then((cacheResponse) => {
               if (cacheResponse) {
                   cacheResponse.took = _.round(performanceNow() - startTime, 3);
 
@@ -189,8 +189,8 @@ export default class ESClient {
               }
 
               return this.request({method: 'GET', uri})
-                .then((response) => Request.handleResponse(response))
-                .then(getResponse => {
+                .then(response => Request.handleResponse(response))
+                .then((getResponse) => {
                     console.log('get: in (ms): ', _.round(performanceNow() - startTime, 3));
                     if (getResponse) {
                         return this.storeInCache(cacheKey, getResponse);
@@ -199,8 +199,8 @@ export default class ESClient {
                     return null;
                 });
           })
-          .catch(error => {
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          .catch((error) => {
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -208,9 +208,9 @@ export default class ESClient {
         const uri = `/${index}/${type}/${id}/_termvectors?fields=*`;
 
         return this.request({method: 'GET', uri})
-          .then((response) => Request.handleResponse(response))
-          .catch(error => {
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          .then(response => Request.handleResponse(response))
+          .catch((error) => {
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -218,9 +218,9 @@ export default class ESClient {
         const uri = `/${index}/_didYouMean?q=${query}`;
 
         return this.request({method: 'GET', uri})
-          .then((response) => Request.handleResponse(response))
-          .catch(error => {
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+          .then(response => Request.handleResponse(response))
+          .catch((error) => {
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -233,7 +233,7 @@ export default class ESClient {
         const cacheKey = `${uri}:${queryKey}`;
 
         return this.retrieveFromCache(cacheKey)
-          .then(cacheResponse => {
+          .then((cacheResponse) => {
               if (cacheResponse) {
                   cacheResponse.took = _.round(performanceNow() - startTime, 3);
 
@@ -243,8 +243,8 @@ export default class ESClient {
               }
 
               return this.request({method: 'POST', uri, body: query})
-                .then((response) => Request.handleResponse(response))
-                .then(queryResponse => {
+                .then(response => Request.handleResponse(response))
+                .then((queryResponse) => {
                     console.log('intent: in (ms): ', _.round(performanceNow() - startTime, 3));
                     if (queryResponse) {
                         return this.storeInCache(cacheKey, queryResponse);
@@ -253,9 +253,9 @@ export default class ESClient {
                     return null;
                 });
           })
-          .catch(error => {
+          .catch((error) => {
               console.error('Error: ', error, error.stack);
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
@@ -266,7 +266,7 @@ export default class ESClient {
           .then((queries) => {
               const uri = '/_msearch';
 
-              // console.log('multiSearch: ', JSON.stringify(queries));
+              console.log('multiSearch: ', JSON.stringify(queries));
 
               const bulkQuery = ESClient.bulkFormat(queries);
 
@@ -274,13 +274,13 @@ export default class ESClient {
               const cacheKey = `${uri}:${queryKey}`;
 
               return this.retrieveFromCache(cacheKey)
-                .then(cacheResponse => {
+                .then((cacheResponse) => {
                     if (cacheResponse) {
                         cacheResponse.took = _.round(performanceNow() - startTime, 3);
 
                         if (cacheResponse.responses) {
                             // set response times
-                            _.forEach(cacheResponse.responses, response => {
+                            _.forEach(cacheResponse.responses, (response) => {
                                 response.took = cacheResponse.took;
                             });
                         }
@@ -291,14 +291,14 @@ export default class ESClient {
 
                     return this.request({method: 'POST', uri, body: bulkQuery, json: false})
                       .then(ESClient.processResponse)
-                      .then(response => {
+                      .then((response) => {
                           if (!_.isUndefined(response) && !_.isNull(response) && _.isString(response)) {
                               return JSON.parse(response);
                           }
 
                           return null;
                       })
-                      .then(queryResponse => {
+                      .then((queryResponse) => {
                           console.log('multiSearch: in (ms): ', _.round(performanceNow() - startTime, 3));
                           if (queryResponse) {
                               return this.storeInCache(cacheKey, queryResponse);
@@ -308,9 +308,9 @@ export default class ESClient {
                       });
                 });
           })
-          .catch(error => {
+          .catch((error) => {
               console.error('Error: ', error, error.stack);
-              throw new InternalServiceError('Internal Service Error', {details: error && error.cause || error, stack: error && error.stack});
+              throw new InternalServiceError('Internal Service Error', {details: (error && error.cause) || error, stack: error && error.stack});
           });
     }
 
