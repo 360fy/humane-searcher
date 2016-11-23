@@ -1345,7 +1345,7 @@ class SearcherInternal {
 
     intent(headers, input) {
         // TODO: do validation later
-        return this._intentInternal(headers, input);
+        return this._intentInternal(headers, input, this.searchConfig.search);
     }
 
     autocomplete(headers, input) {
@@ -1427,10 +1427,19 @@ class SearcherInternal {
 
     buildIntentTokenListQuery(intentTokenList, weight, field) {
         if (intentTokenList.length > 1) {
+            let minimumShouldMatch = 1;
+            if (intentTokenList.length > 2) {
+                if (intentTokenList.length <= 4) {
+                    minimumShouldMatch = 2;
+                } else {
+                    minimumShouldMatch = 3;
+                }
+            }
+
             return {
                 bool: {
                     should: _.map(intentTokenList, intentToken => this.buildIntentTokenQuery(intentToken, weight, field)),
-                    minimum_should_match: intentTokenList.length
+                    minimum_should_match: minimumShouldMatch
                 }
             };
         }
@@ -1985,6 +1994,10 @@ export default class Searcher {
         return this.errorWrap('autocomplete', request, this.internal.autocomplete(headers, request));
     }
 
+    intent(headers, request) {
+        return this.errorWrap('intent', request, this.internal.intent(headers, request));
+    }
+
     suggestedQueries(headers, request) {
         return this.errorWrap('suggestedQueries', request, this.internal.suggestedQueries(headers, request));
     }
@@ -2035,6 +2048,10 @@ export default class Searcher {
                 // {handler: this.didYouMean},
                 {handler: this.didYouMean, method: 'get'}
             ],
+            intent: [
+                {handler: this.intent},
+                {handler: this.intent, method: 'get'}
+            ],
             'explain/search': [
                 {handler: this.explainSearch},
                 {handler: this.explainSearch, method: 'get'}
@@ -2071,6 +2088,10 @@ export default class Searcher {
             ':type/didYouMean': [
                 // {handler: this.didYouMean},
                 {handler: this.didYouMean, method: 'get'}
+            ],
+            ':type/intent': [
+                {handler: this.intent},
+                {handler: this.intent, method: 'get'}
             ],
             ':type/view': [
                 {handler: this.view},
