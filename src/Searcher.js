@@ -3,11 +3,10 @@ import _ from 'lodash';
 import Joi from 'joi';
 import Promise from 'bluebird';
 import {EventEmitter} from 'events';
-
+import qs from 'qs';
 import LanguageDetector from 'humane-node-commons/lib/LanguageDetector';
 import ValidationError from 'humane-node-commons/lib/ValidationError';
 import InternalServiceError from 'humane-node-commons/lib/InternalServiceError';
-
 import ESClient from './ESClient';
 import * as Constants from './Constants';
 import buildApiSchema from './ApiSchemaBuilder';
@@ -976,7 +975,25 @@ class SearcherInternal {
         return _.defaults(_.pick(hit, ['_id', '_score', '_type', '_weight', '_version']), /*{_name: name},*/ source);
     }
 
-    _processResponse(response, searchTypesConfig, type) {
+    // eslint-disable-next-line class-methods-use-this
+    _baseUrl(input, type, apiType) {
+        const inputParams = _(input)
+          .pick(['text', 'filter', 'sort'])
+          // .mapValues((value, key) => {
+          //     if (key === 'type' && (value === '' || value === '*')) {
+          //         return undefined;
+          //     }
+          //
+          //     return value;
+          // })
+          .value();
+
+        inputParams.type = type;
+
+        return `/searcher/api/${apiType}?${qs.stringify(inputParams, {allowDots: true, skipNulls: true})}`;
+    }
+
+    _processResponse(response, searchTypesConfig, type, input, apiType) {
         // let type = null;
         // let name = null;
 
@@ -1084,10 +1101,44 @@ class SearcherInternal {
             });
         }
 
-        return {type, /*name,*/ resultType: type, results, summaries, facets, queryTimeTaken: response.took, totalResults: _.get(response, 'hits.total', 0)};
+        let nextPage;
+        let prevPage;
+
+        const baseUrl = this._baseUrl(input, type, apiType);
+
+        if (input.page > 0) {
+            prevPage = {
+                page: input.page - 1,
+                url: `${baseUrl}&page=${input.page - 1}`
+            };
+        }
+
+        const count = results && results.length;
+        const totalResults = _.get(response, 'hits.total', 0);
+
+        if ((input.count * input.page) + count < totalResults) {
+            nextPage = {
+                page: input.page + 1,
+                url: `${baseUrl}&page=${input.page + 1}`
+            };
+        }
+
+        return {
+            type,
+            /*name,*/
+            resultType: type,
+            results,
+            summaries,
+            facets,
+            queryTimeTaken: response.took,
+            totalResults,
+            count,
+            prevPage,
+            nextPage
+        };
     }
 
-    processMultipleSearchResponse(responses, searchTypesConfig, types, input) {
+    processMultipleSearchResponse(responses, searchTypesConfig, types, input, apiType) {
         if (!responses) {
             return null;
         }
@@ -1105,7 +1156,7 @@ class SearcherInternal {
 
         _.forEach(responses.responses, (response, index) => {
             const type = types && _.isArray(types) && types.length > index && types[index];
-            const result = this._processResponse(response, searchTypesConfig, type);
+            const result = this._processResponse(response, searchTypesConfig, type, input, apiType);
 
             if (!result || !result.type || /*!result.name ||*/ !result.results || result.results.length === 0) {
                 return;
@@ -1114,18 +1165,59 @@ class SearcherInternal {
             mergedResult.queryTimeTaken = Math.max(mergedResult.queryTimeTaken || 0, result.queryTimeTaken);
             mergedResult.results[result.type] = result;
             mergedResult.totalResults += result.totalResults;
-            mergedResult.count += result && result.length;
+            mergedResult.count += result && result.results.length;
         });
+
+        let nextPage;
+        let prevPage;
+
+        const baseUrl = this._baseUrl(input, null, apiType);
+
+        // if (input.text) {
+        //     baseUrl = `${baseUrl}&${qs.stringify({text: input.text}, {allowDots: true})}`;
+        // }
+        //
+        // // if (input.type) {
+        // //     baseUrl = `${baseUrl}&text=${input.type}`;
+        // // }
+        //
+        // if (input.filter) {
+        //     baseUrl = `${baseUrl}&${qs.stringify({filter: input.filter}, {allowDots: true})}`;
+        // }
+        //
+        // if (input.sort) {
+        //     baseUrl = `${baseUrl}&${qs.stringify({sort: input.sort}, {allowDots: true})}`;
+        // }
+
+        if (input.page > 0) {
+            prevPage = {
+                page: input.page - 1,
+                url: `${baseUrl}&page=${input.page - 1}`
+            };
+        }
+
+        const count = mergedResult.count;
+        const totalResults = mergedResult.totalResults;
+
+        if ((input.count * input.page) + count < totalResults) {
+            nextPage = {
+                page: input.page + 1,
+                url: `${baseUrl}&page=${input.page + 1}`
+            };
+        }
+
+        mergedResult.prevPage = prevPage;
+        mergedResult.nextPage = nextPage;
 
         return mergedResult;
     }
 
-    processSingleSearchResponse(response, searchTypesConfig, type, input) {
+    processSingleSearchResponse(response, searchTypesConfig, type, input, apiType) {
         if (!response) {
             return null;
         }
 
-        const finalResponse = this._processResponse(response, searchTypesConfig, type);
+        const finalResponse = this._processResponse(response, searchTypesConfig, type, input, apiType);
 
         if (input.bareResponse) {
             return finalResponse;
@@ -1135,17 +1227,17 @@ class SearcherInternal {
             searchText: input.text,
             filter: input.filter,
             sort: input.sort,
-            page: input.page,
-            count: finalResponse && finalResponse.results && finalResponse.results.length
+            page: input.page
+            // count: finalResponse && finalResponse.results && finalResponse.results.length
         });
     }
 
-    processFlatSearchResponse(response, searchTypesConfig, input) {
+    processFlatSearchResponse(response, searchTypesConfig, input, apiType) {
         if (!response) {
             return null;
         }
 
-        const finalResponse = this._processResponse(response, searchTypesConfig);
+        const finalResponse = this._processResponse(response, searchTypesConfig, null, input, apiType);
 
         return _.extend(finalResponse, {
             searchText: input.text,
@@ -1276,14 +1368,14 @@ class SearcherInternal {
           })
           .then((response) => {
               if (multiSearch) {
-                  return this.processMultipleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
+                  return this.processMultipleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input, eventName);
               }
 
               if (flat) {
-                  return this.processFlatSearchResponse(response, searchTypeConfigs, input);
+                  return this.processFlatSearchResponse(response, searchTypeConfigs, input, eventName);
               }
 
-              return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input);
+              return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input, eventName);
           })
           .then((response) => {
               this.eventEmitter.emit(eventName, {headers, queryData: input, queryLanguages, queryResult: response});
@@ -1374,7 +1466,8 @@ class SearcherInternal {
               const finalResult = {
                   searchText: text,
                   results: [],
-                  totalResults: 0
+                  totalResults: 0,
+                  count: 0
               };
 
               _.forEach(response, (value, key) => {
@@ -1385,6 +1478,7 @@ class SearcherInternal {
                   }
 
                   finalResult.totalResults += _.get(section, 'totalResults', 0);
+                  finalResult.count += _.get(section, 'count', 0);
                   finalResult.results.push(section);
               });
 

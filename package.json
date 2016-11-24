@@ -18,7 +18,8 @@
     "joi": "9.2.0",
     "lodash": "4.17.2",
     "md5": "2.2.1",
-    "performance-now": "0.2.0"
+    "performance-now": "0.2.0",
+    "qs": "6.3.0"
   },
   "devDependencies": {
     "babel-core": "6.18.2",
