@@ -246,6 +246,7 @@ class SearcherInternal {
                     query: text,
                     boost: fieldConfig.weight,
                     vernacularOnly: fieldConfig.vernacularOnly,
+                    keyword: fieldConfig.keyword,
 
                     //path: fieldConfig.nestedPath,
                     noFuzzy: fieldConfig.noFuzzy
@@ -392,6 +393,7 @@ class SearcherInternal {
                             boost: queryField.weight,
                             vernacularOnly: queryField.vernacularOnly,
                             noFuzzy: !fuzzySearch || queryField.noFuzzy,
+                            keyword: queryField.keyword,
                             intentIndex,
                             intentFields
                         }
@@ -410,6 +412,7 @@ class SearcherInternal {
                           field: queryField.field,
                           boost: queryField.weight,
                           vernacularOnly: queryField.vernacularOnly,
+                          keyword: queryField.keyword,
                           path: queryField.nestedPath,
                           noFuzzy: !fuzzySearch || queryField.noFuzzy
                       }))
@@ -1650,7 +1653,7 @@ class SearcherInternal {
               });
 
               return {
-                  results,
+                  results: _.filter(results, result => result.results && result.results.length > 0),
                   totalResults
               };
           });
