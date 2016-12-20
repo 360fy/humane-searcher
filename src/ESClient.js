@@ -242,6 +242,8 @@ export default class ESClient {
                   return cacheResponse;
               }
 
+              console.log('intent: ', uri, JSON.stringify(query));
+
               return this.request({method: 'POST', uri, body: query})
                 .then(response => Request.handleResponse(response))
                 .then((queryResponse) => {

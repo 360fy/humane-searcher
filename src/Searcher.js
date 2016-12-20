@@ -237,11 +237,12 @@ class SearcherInternal {
     }
 
     // eslint-disable-next-line class-methods-use-this
-    humaneQuery(fieldConfig, text, intentIndex, intentFields) {
+    humaneQuery(fieldConfig, text, intentFields) {
         return {
             humane_query: {
                 [fieldConfig.field]: {
-                    intentIndex,
+                    // instance: this.instanceName, // new
+                    intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                     intentFields,
                     query: text,
                     boost: fieldConfig.weight,
@@ -296,7 +297,20 @@ class SearcherInternal {
         };
     }
 
-    buildFieldQuery(fieldConfig, valueOrArrayOfValue, queries, intentIndex, intentFields) {
+    // eslint-disable-next-line class-methods-use-this
+    existsQuery(field) {
+        return {
+            bool: {
+                must: {
+                    exists: {
+                        field
+                    }
+                }
+            }
+        };
+    }
+
+    buildFieldQuery(fieldConfig, valueOrArrayOfValue, queries, intentFields) {
         let query = null;
 
         if (fieldConfig.filter && fieldConfig.rangeQuery) {
@@ -318,14 +332,22 @@ class SearcherInternal {
 
             query = this.boolShouldQueries(matchingRangeQueries);
         } else if (fieldConfig.filter && fieldConfig.termQuery) {
-            query = this.termQuery(fieldConfig, valueOrArrayOfValue);
+            if (valueOrArrayOfValue === '__not_empty__') {
+                query = this.existsQuery(fieldConfig.field);
+            } else {
+                query = this.termQuery(fieldConfig, valueOrArrayOfValue);
+            }
         } else {
-            query = this.humaneQuery(fieldConfig, valueOrArrayOfValue, intentIndex, intentFields);
+            query = this.humaneQuery(fieldConfig, valueOrArrayOfValue, intentFields);
+        }
+
+        if (query == null) {
+            return null;
         }
 
         query = this.wrapQuery(fieldConfig, query);
 
-        if (fieldConfig.filter && (fieldConfig.termQuery || fieldConfig.rangeQuery) && fieldConfig.includeMissing) {
+        if (fieldConfig.filter && (fieldConfig.termQuery || fieldConfig.rangeQuery) && fieldConfig.includeMissing && valueOrArrayOfValue !== '__not_empty__') {
             query = this.boolShouldQueries([query, this.wrapQuery(fieldConfig, this.missingQuery(fieldConfig.field))]);
         }
 
@@ -349,12 +371,10 @@ class SearcherInternal {
         return typeConfig;
     }
 
-    buildTypeQuery(searchTypeConfig, text, fuzzySearch, intentIndex, intentFields) {
+    buildTypeQuery(searchTypeConfig, text, fuzzySearch, intentFields) {
         if (!text || _.isEmpty(text)) {
             return {};
         }
-
-        // console.log('Fuzzy Search: ', fuzzySearch, !fuzzySearch || undefined);
 
         // // TODO: language detection is not needed immediately, but shall be moved to esplugin
         // const languages = this.languageDetector.detect(text);
@@ -394,7 +414,8 @@ class SearcherInternal {
                             vernacularOnly: queryField.vernacularOnly,
                             noFuzzy: !fuzzySearch || queryField.noFuzzy,
                             keyword: queryField.keyword,
-                            intentIndex,
+                            // instance: this.instanceName, // new
+                            intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                             intentFields
                         }
                     }
@@ -405,7 +426,8 @@ class SearcherInternal {
             query: {
                 multi_humane_query: {
                     query: text,
-                    intentIndex,
+                    // instance: this.instanceName, // new
+                    intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                     intentFields,
                     fields: _(queryFields)
                       .map(queryField => ({
@@ -428,7 +450,7 @@ class SearcherInternal {
         return !_.isUndefined(value) && !_.isNull(value);
     }
 
-    filterQueries(searchTypeConfig, input, termLanguages, intentIndex, intentFields) {
+    filterQueries(searchTypeConfig, input, termLanguages, intentFields) {
         const filterConfigs = searchTypeConfig.filters || searchTypeConfig.indexType.filters;
 
         if (!filterConfigs) {
@@ -477,18 +499,18 @@ class SearcherInternal {
                     filterValue = filterConfig.value(filterValue);
                 }
 
-                this.buildFieldQuery(_.defaults({filter: true, rangeQuery: range, termQuery: !range && filterConfig.termQuery}, filterConfig), filterValue, filterQueries, intentIndex, intentFields);
+                this.buildFieldQuery(_.defaults({filter: true, rangeQuery: range, termQuery: !range && filterConfig.termQuery}, filterConfig), filterValue, filterQueries, intentFields);
             }
 
             return true;
         });
 
         if (input.lang && !_.isEmpty(input.lang)) {
-            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), input.lang, filterQueries, intentIndex, intentFields);
+            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), input.lang, filterQueries, intentFields);
         }
 
         if (termLanguages && !_.isEmpty(termLanguages)) {
-            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), termLanguages, filterQueries, intentIndex, intentFields);
+            this.buildFieldQuery(_.extend({filter: true}, filterConfigs.lang), termLanguages, filterQueries, intentFields);
         }
 
         if (filterQueries.length === 0) {
@@ -504,7 +526,7 @@ class SearcherInternal {
         return filterQueries;
     }
 
-    facetQueries(searchTypeConfig, input, intentIndex, intentFields) {
+    facetQueries(searchTypeConfig, input, intentFields) {
         const facetConfigs = searchTypeConfig.facets || searchTypeConfig.indexType.facets;
 
         if (!facetConfigs) {
@@ -540,7 +562,7 @@ class SearcherInternal {
                     return true;
                 }
 
-                if (facetConfig.type === 'field') {
+                if (facetConfig.type === 'field' || facetConfig.type === 'min-max') {
                     // form field query here - termQuery, nestedPath, field
                     this.buildFieldQuery({
                         filter: true,
@@ -550,7 +572,7 @@ class SearcherInternal {
                         nestedPath: facetConfig.nestedPath,
                         includeMissing: facetConfig.includeMissing,
                         supportsRangeQuery: facetConfig.supportsRangeQuery
-                    }, filterValue, facetQueries, intentIndex, intentFields);
+                    }, filterValue, facetQueries, intentFields);
                 } else if (facetConfig.type === 'filters') {
                     // find matching filter and form appropriate query here
                     const matchingFilterQueries = [];
@@ -756,6 +778,12 @@ class SearcherInternal {
                     size: 1000 // 1000 values are enough here
                 }
             };
+        } else if (facetConfig.type === 'min-max') {
+            facetValue = {
+                stats: {
+                    field: facetConfig.field
+                }
+            };
         } else if (facetConfig.type === 'ranges') {
             if (!facetConfig.ranges) {
                 throw new ValidationError('No ranges defined for range type facet', {details: {code: 'NO_RANGES_DEFINED', facetName: facetConfig.key, facetType: facetConfig.type}});
@@ -810,7 +838,7 @@ class SearcherInternal {
             facetValue.aggs = summaryAggregations;
         }
 
-        if ((facetConfig.type === 'field' || facetConfig.type === 'ranges') && facetConfig.nestedPath) {
+        if ((facetConfig.type === 'field' || facetConfig.type === 'ranges' || facetConfig.type === 'min-max') && facetConfig.nestedPath) {
             facetValue = {
                 nested: {
                     path: facetConfig.nestedPath
@@ -902,7 +930,7 @@ class SearcherInternal {
         };
     }
 
-    searchQuery(searchTypeConfig, input, intentIndex, intentFields, query, queryLanguages) {
+    searchQuery(searchTypeConfig, input, intentFields, query, queryLanguages) {
         const indexTypeConfig = searchTypeConfig.indexType;
 
         let sort = this.sortPart(searchTypeConfig, input) || undefined;
@@ -915,7 +943,7 @@ class SearcherInternal {
             facets = undefined;
         }
 
-        const filter = this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages), intentIndex, intentFields);
+        const filter = this.filterQueries(searchTypeConfig, input, _.keys(queryLanguages), intentFields);
 
         return this._searchQueryInternal(
           indexTypeConfig.index,
@@ -931,7 +959,7 @@ class SearcherInternal {
           indexTypeConfig.type,
           sort,
           facets,
-          this.facetQueries(searchTypeConfig, input, intentIndex, intentFields)
+          this.facetQueries(searchTypeConfig, input, intentFields)
         );
     }
 
@@ -945,7 +973,7 @@ class SearcherInternal {
                       return true;
                   }
 
-                  if (this.instanceName === 'carDekho' && (key === 'features' || key === 'colors' || key === 'content')) {
+                  if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && (key === 'features' || key === 'colors' || key === 'content')) {
                       return true;
                   }
 
@@ -1003,17 +1031,18 @@ class SearcherInternal {
         const results = [];
 
         if (response.hits && response.hits.hits) {
-            // let first = true;
-            _.forEach(response.hits.hits, (hit) => {
-                // if (first || !type) {
-                //     type = hit._type;
-                //     const typeConfig = this.searchConfig.types[type];
-                //     name = (typeConfig && (typeConfig.name || typeConfig.type)) || type;
-                //
-                //     first = false;
-                // }
+            // _.forEach(response.hits.hits, (hit) => {
+            //     results.push(this._processSource(hit));
+            // });
 
-                results.push(this._processSource(hit /*, name*/));
+            let previousScore = null;
+            _.forEach(response.hits.hits, (hit) => {
+                const hitOut = this._processSource(hit);
+
+                if (previousScore == null || (hitOut._score * 1.0) / previousScore > 0.40) {
+                    results.push(hitOut);
+                    previousScore = hitOut._score;
+                }
             });
         }
 
@@ -1050,17 +1079,17 @@ class SearcherInternal {
                     return true;
                 }
 
-                if ((facetConfig.type === 'field' || facetConfig.type === 'ranges') && facetConfig.nestedPath) {
+                if ((facetConfig.type === 'field' || facetConfig.type === 'ranges' || facetConfig.type === 'min-max') && facetConfig.nestedPath) {
                     facet = facet.nested;
                 }
 
-                const buckets = facet.buckets;
-
-                if (facetConfig.type === 'filter' || facetConfig.type === 'filters') {
+                if (facetConfig.type === 'min-max') {
+                    facets[facetConfig.key] = facet;
+                } else if (facetConfig.type === 'filter' || facetConfig.type === 'filters') {
                     // bucket is an object with key as object key and doc_count as value
                     const output = facets[facetConfig.key] = [];
 
-                    _.forEach(buckets, (bucket, key) => {
+                    _.forEach(facet.buckets, (bucket, key) => {
                         const facetResult = {
                             key,
                             count: bucket.doc_count,
@@ -1080,7 +1109,7 @@ class SearcherInternal {
                     });
                 } else {
                     // bucket is an array of objects with key and doc_count
-                    facets[facetConfig.key] = _.map(buckets, (bucket) => {
+                    facets[facetConfig.key] = _.map(facet.buckets, (bucket) => {
                         const facetResult = {
                             key: bucket.key,
                             count: bucket.doc_count,
@@ -1215,6 +1244,79 @@ class SearcherInternal {
         return mergedResult;
     }
 
+    processMultipleSearchResponseAsArray(responses, searchTypesConfig, types, input, apiType) {
+        if (!responses) {
+            return null;
+        }
+
+        const mergedResult = {
+            multi: true,
+            totalResults: 0,
+            results: [],
+            searchText: input && input.text,
+            filter: input && input.filter,
+            sort: input && input.sort,
+            page: input && input.page,
+            count: 0
+        };
+
+        _.forEach(responses.responses, (response) => {
+            const result = {
+                results: [],
+                totalResults: 0,
+                count: 0
+            };
+
+            if (response.hits && response.hits.hits) {
+                result.totalResults = _.get(response, 'hits.total', 0);
+
+                let previousScore = null;
+                _.forEach(response.hits.hits, (hit) => {
+                    const hitOut = this._processSource(hit);
+
+                    if (previousScore == null || (hitOut._score * 1.0) / previousScore > 0.40) {
+                        result.results.push(hitOut);
+                        previousScore = hitOut._score;
+                    }
+                });
+
+                result.count = result.results && result.results.length;
+            }
+
+            mergedResult.queryTimeTaken = Math.max(mergedResult.queryTimeTaken || 0, result.queryTimeTaken);
+            mergedResult.results.push(result);
+            mergedResult.totalResults += result.totalResults;
+            mergedResult.count += result && result.count;
+        });
+
+        let nextPage;
+        let prevPage;
+
+        const baseUrl = this._baseUrl(input, null, apiType);
+
+        if (input.page > 0) {
+            prevPage = {
+                page: input.page - 1,
+                url: `${baseUrl}&page=${input.page - 1}`
+            };
+        }
+
+        const count = mergedResult.count;
+        const totalResults = mergedResult.totalResults;
+
+        if ((input.count * input.page) + count < totalResults) {
+            nextPage = {
+                page: input.page + 1,
+                url: `${baseUrl}&page=${input.page + 1}`
+            };
+        }
+
+        mergedResult.prevPage = prevPage;
+        mergedResult.nextPage = nextPage;
+
+        return mergedResult;
+    }
+
     processSingleSearchResponse(response, searchTypesConfig, type, input, apiType) {
         if (!response) {
             return null;
@@ -1251,7 +1353,7 @@ class SearcherInternal {
         });
     }
 
-    _searchInternal(headers, input, searchApiConfig, eventName) {
+    _queryInternal(headers, input, searchApiConfig) {
         let multiSearch = false;
         let flat = false;
 
@@ -1259,9 +1361,9 @@ class SearcherInternal {
 
         const searchTypeConfigs = searchApiConfig.types;
 
-        let responsePostProcessor = null;
-
         let typeOrTypesArray = null;
+
+        let responsePostProcessor = null;
 
         let text = input.text;
 
@@ -1272,18 +1374,19 @@ class SearcherInternal {
               .replace(/(^|[\s]|[^0-9]|[^a-z])\.([0-9]+)[\s]*(mg|mcg|ml|%)/gi, '$10.$2$3')
               .replace(/([0-9]+)'S$/gi, '$1S')
               .trim();
+        } else if (this.instanceName === 'prettySecrets' && text) {
+            // eslint-disable-next-line no-regex-spaces, max-len
+            text = text.replace(/(PS 0916MWBHPR-0(?:1|2)|(?:PS[0-9A-Z]+(?:-[0-9A-Z]+)?(?: - BASIX| - PURPLE| ANTIQUE ROSE| A| BERRY| BLACK| BLK.GOLD| BLKPINK| BLUE| BROWN| B| CHERRY| CORALFLR| CREAMFLR| DARKGREY| GIRAFFE| HPR04 Lime Navy| IVORY| LEMON| LILAC| NAVY WHITE| PINK HEART| PINK| PNKSNAKE| PURGREY| PURPLE| RED| REDBLACK| SCARLETT| WHITE| YELLOW|,  HPR04 Yellow orange| PS[0-9A-Z]+(?:-[0-9A-Z]+)?)?))(?:[\s]+|$)/gi, match => _.snakeCase(match));
         }
 
         // return Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
         //   .then(({query, queryLanguages}) => {
 
-        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`;
         let intentFields = [];
-        if (!input.type || input.type === '*') {
-            responsePostProcessor = searchApiConfig.multiResponsePostProcessor;
-
+        if (!input.type || input.type === '*' || _.isArray(input.type)) {
             typeOrTypesArray = [];
             _(searchTypeConfigs)
+              .filter((value, key) => !_.isArray(input.type) || _.some(input.type, val => val === key))
               .values()
               .forEach((searchTypeConfig) => {
                   typeOrTypesArray.push(_.get(searchTypeConfig, 'indexType.type'));
@@ -1292,11 +1395,14 @@ class SearcherInternal {
 
             intentFields = _.uniq(intentFields);
 
-            if (searchApiConfig.flat) {
+            responsePostProcessor = searchApiConfig.multiResponsePostProcessor;
+
+            if (searchApiConfig.flat || input.flat) {
                 const searchQueries = _(searchTypeConfigs)
+                  .filter((value, key) => !_.isArray(input.type) || _.some(input.type, val => val === key))
                   .values()
                   .map(typeConfig =>
-                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentIndex, intentFields))
+                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentFields))
                       .then(({query}) => ({
                           bool: {
                               must: [
@@ -1320,10 +1426,11 @@ class SearcherInternal {
                   .then(queries => this._searchQueryInternal(`${_.toLower(this.instanceName)}_store`, {bool: {should: queries}}, input.page, input.count || 10));
             } else {
                 const searchQueries = _(searchTypeConfigs)
+                  .filter((value, key) => !_.isArray(input.type) || _.some(input.type, val => val === key))
                   .values()
                   .map(typeConfig =>
-                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentIndex, intentFields))
-                      .then(({query, queryLanguages}) => this.searchQuery(typeConfig, input, intentIndex, intentFields, query, queryLanguages)))
+                    Promise.resolve(this.buildTypeQuery(typeConfig, text, input.fuzzySearch, intentFields))
+                      .then(({query, queryLanguages}) => this.searchQuery(typeConfig, input, intentFields, query, queryLanguages)))
                   .value();
 
                 multiSearch = _.isArray(searchQueries) || false;
@@ -1337,32 +1444,50 @@ class SearcherInternal {
                 throw new ValidationError(`No type config found for: ${input.type}`, {details: {code: 'SEARCH_CONFIG_NOT_FOUND', type: input.type}});
             }
 
+            responsePostProcessor = searchTypeConfig.responsePostProcessor;
+
             typeOrTypesArray = searchTypeConfig.indexType && searchTypeConfig.indexType.type;
             intentFields = _.concat(intentFields, _.get(searchTypeConfig, 'intentEntities', []));
 
-            responsePostProcessor = searchTypeConfig.responsePostProcessor;
-
             intentFields = _.uniq(intentFields);
 
-            promise = Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentIndex, intentFields))
-              .then(({query, queryLanguages}) => this.searchQuery(searchTypeConfig, input, intentIndex, intentFields, query, queryLanguages));
+            promise = Promise.resolve(this.buildTypeQuery(searchTypeConfig, text, input.fuzzySearch, intentFields))
+              .then(({query, queryLanguages}) => this.searchQuery(searchTypeConfig, input, intentFields, query, queryLanguages));
 
             // promise = this.searchQuery(searchTypeConfig, input, intentIndex, intentFields);
         }
 
-        let queryLanguages = null;
+        // let queryLanguages = null;
+        // if (multiSearch) {
+        //     queryLanguages = _.head(queryOrArray).queryLanguages;
+        // } else {
+        //     queryLanguages = queryOrArray.queryLanguages;
+        // }
 
         return Promise.resolve(promise)
-          .then((queryOrArray) => {
-              if (multiSearch) {
-                  queryLanguages = _.head(queryOrArray).queryLanguages;
-              } else {
-                  queryLanguages = queryOrArray.queryLanguages;
-              }
+        // .then((queryOrArray) => {
+        //     console.log('input, queryOrArray: ', input, queryOrArray);
+        //     return queryOrArray;
+        // })
+          .then(queryOrArray => ({queryOrArray, multiSearch, flat, typeOrTypesArray, responsePostProcessor}));
+    }
 
-              return queryOrArray;
-          })
-          .then((queryOrArray) => {
+    _searchInternal(headers, input, searchApiConfig, eventName, queryResponse) {
+        const searchTypeConfigs = searchApiConfig.types;
+        let multiSearch = false;
+        let flat = false;
+        let queryOrArray = null;
+        let typeOrTypesArray = null;
+        let responsePostProcessor = null;
+
+        return Promise.resolve(queryResponse || this._queryInternal(headers, input, searchApiConfig))
+          .then((response) => {
+              queryOrArray = response.queryOrArray;
+              multiSearch = response.multiSearch;
+              flat = response.flat;
+              typeOrTypesArray = response.typeOrTypesArray;
+              responsePostProcessor = response.responsePostProcessor;
+
               if (multiSearch) {
                   return this.esClient.multiSearch(queryOrArray);
               }
@@ -1381,7 +1506,7 @@ class SearcherInternal {
               return this.processSingleSearchResponse(response, searchTypeConfigs, typeOrTypesArray, input, eventName);
           })
           .then((response) => {
-              this.eventEmitter.emit(eventName, {headers, queryData: input, queryLanguages, queryResult: response});
+              this.eventEmitter.emit(eventName, {headers, queryData: input, queryLanguages: null, queryResult: response});
 
               if (responsePostProcessor && input.format === 'custom') {
                   return responsePostProcessor(response);
@@ -1397,7 +1522,8 @@ class SearcherInternal {
     //      regexEntities - todo later
     //      query
     _intentInternal(headers, input, searchApiConfig) {
-        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`;
+        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`; // old
+        // const intentIndex = `${_.toLower(this.instanceName)}:metadata_store`; // new
         const query = input.text;
 
         const searchTypeConfigs = searchApiConfig.types;
@@ -1634,8 +1760,9 @@ class SearcherInternal {
     }
 
     // eslint-disable-next-line class-methods-use-this
-    buildSection(sectionResponseOrPromise, sectionName, resultType, sectionTitle) {
+    buildSection(sectionResponseOrPromise, sectionName, resultType, sectionTitle, sorter) {
         return Promise.resolve(sectionResponseOrPromise)
+          .then(response => (sorter && _.defaults({results: sorter(response.results)}, response)) || response)
           .then(response => (_.defaults({type: 'section', name: sectionName, title: sectionTitle, resultType}, response)));
     }
 
@@ -1659,20 +1786,79 @@ class SearcherInternal {
           });
     }
 
-    formatMultiResponseIntoSections(multiResponseOrPromise) {
-        return Promise.resolve(multiResponseOrPromise)
-          .then(multiResponse => this.composeSections(
-            this.buildSection(_.get(multiResponse, 'results.new_car_model'), 'models', 'new_car_model', 'New Car Models'),
-            this.buildSection(_.get(multiResponse, 'results.new_car_variant'), 'variants', 'new_car_variant', 'New Car Variants'),
-            this.buildSection(_.get(multiResponse, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-            this.buildSection(_.get(multiResponse, 'results.car_news'), 'news', 'car_news', 'News'),
-            this.buildSection(_.get(multiResponse, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
-          ));
+    _multiSearch(queries, input) {
+        return Promise.resolve(this.esClient.multiSearch(queries))
+          .then(response => this.processMultipleSearchResponseAsArray(response, this.searchConfig.search.types, _.map(queries, obj => obj.type), input));
     }
 
-    _multiSearch(queries) {
-        return Promise.resolve(this.esClient.multiSearch(queries))
-          .then(response => this.processMultipleSearchResponse(response, this.searchConfig.search.types, _.map(queries, obj => obj.type)));
+    // eslint-disable-next-line class-methods-use-this
+    newCarsQuery(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: ['new_car_model', 'new_car_variant'], flat: true}, input), searchApiConfig))
+          .then(response => response.queryOrArray);
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    usedCarsQuery(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'used_car'}, input), searchApiConfig))
+          .then(response => response.queryOrArray);
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    carNewsQuery(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'car_news'}, input), searchApiConfig))
+          .then(response => response.queryOrArray);
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    // newCarDealersQuery(headers, input, searchApiConfig) {
+    //     return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'new_car_dealer'}, input), searchApiConfig))
+    //       .then(response => response.queryOrArray);
+    // }
+
+    // eslint-disable-next-line class-methods-use-this
+    sortNewCarResults(results) {
+        // eslint-disable-next-line no-confusing-arrow
+        return _.sortBy(results, result => -1.0 * result._score, result => result._type === 'new_car_model' ? 0 : 1);
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    searchNewCars(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: ['new_car_model', 'new_car_variant'], flat: true}, input), searchApiConfig))
+          .then(response => this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT, response))
+          .then(response => _.defaults({type: 'new_car', resultType: 'new_car', results: this.sortNewCarResults(response.results)}, response));
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    searchUsedCars(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'used_car'}, input), searchApiConfig))
+          .then(response => this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT, response));
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    searchCarNews(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'car_news'}, input), searchApiConfig))
+          .then(response => this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT, response));
+    }
+
+    // eslint-disable-next-line class-methods-use-this
+    searchNewCarDealers(headers, input, searchApiConfig) {
+        return Promise.resolve(this._queryInternal(headers, _.defaults({type: 'new_car_dealer'}, input), searchApiConfig))
+          .then(response => this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT, response));
+    }
+
+    searchWithoutIntent(headers, input, searchApiConfig) {
+        return this._multiSearch([
+            this.newCarsQuery(headers, input, searchApiConfig),
+            this.usedCarsQuery(headers, input, searchApiConfig),
+            this.carNewsQuery(headers, input, searchApiConfig),
+            // this.newCarDealersQuery(headers, input, searchApiConfig),
+        ], input)
+          .then(multiResponse => this.composeSections(
+            this.buildSection(_.get(multiResponse, 'results[0]'), 'new_car', 'new_car', 'New Cars', this.sortNewCarResults),
+            this.buildSection(_.get(multiResponse, 'results[1]'), 'used-cars', 'used_car', 'Used Cars'),
+            this.buildSection(_.get(multiResponse, 'results[2]'), 'news', 'car_news', 'News')
+            // this.buildSection(_.get(multiResponse, 'results[3]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+          ));
     }
 
     carDekhoIntentBasedSearch(intentSuggestions, headers, input, searchApiConfig) {
@@ -1682,14 +1868,14 @@ class SearcherInternal {
             this.searchCarDekhoVariant(intentSuggestions)
         ];
 
-        return Promise.resolve(this._multiSearch(typeDecipherQueries))
+        return Promise.resolve(this._multiSearch(typeDecipherQueries, input))
           .then((response) => {
               // check if brand result and how many
               // else check if model result and how many
               // else check if variant results and how many
-              const brandHits = _.get(response, 'results.new_car_brand.totalResults', 0);
-              const modelHits = _.get(response, 'results.new_car_model.totalResults', 0);
-              const variantHits = _.get(response, 'results.new_car_variant.totalResults', 0);
+              const brandHits = _.get(response, 'results[0].totalResults', 0);
+              const modelHits = _.get(response, 'results[1].totalResults', 0);
+              const variantHits = _.get(response, 'results[2].totalResults', 0);
 
               let searchType = null;
               if (brandHits) {
@@ -1713,7 +1899,7 @@ class SearcherInternal {
               }
 
               if (!searchType) {
-                  return this.formatMultiResponseIntoSections(this._searchInternal(headers, input, searchApiConfig, Constants.SEARCH_EVENT));
+                  return this.searchWithoutIntent(headers, input, searchApiConfig);
               }
 
               if (searchType === 'brand-single') {
@@ -1726,12 +1912,12 @@ class SearcherInternal {
                       this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'),
                       this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'),
                       this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-                  ]))
+                  ], input))
                     .then(sectionResponses => this.composeSections(
-                      this.buildSection(_.get(response, 'results.new_car_model'), 'models', 'new_car_model', 'New Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                      this.buildSection(_.get(response, 'results[1]'), 'new_car', 'new_car', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[0]'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[1]'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results[2]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                     ));
               } else if (searchType === 'brand-multi') {
                   // matching brands
@@ -1743,12 +1929,12 @@ class SearcherInternal {
                       this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'brand'),
                       this.searchNewsByIntentSuggestions(intentSuggestions, 'brand'),
                       this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-                  ]))
+                  ], input))
                     .then(sectionResponses => this.composeSections(
-                      this.buildSection(_.get(response, 'results.new_car_brand'), 'matching-brands', 'new_car_brand', 'Matching Brands'),
-                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                      this.buildSection(_.get(response, 'results[0]'), 'new_car', 'new_car', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[0]'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[1]'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results[2]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                     ));
               } else if (searchType === 'model-single') {
                   // matching single model
@@ -1758,16 +1944,16 @@ class SearcherInternal {
                   // new car dealers for brand of the matching model
 
                   return Promise.resolve(this._multiSearch([
+                      this.newCarsQuery(headers, input, searchApiConfig),
                       this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-                  ]))
+                  ], input))
                     .then(sectionResponses => this.composeSections(
-                      this.buildSection(_.get(response, 'results.new_car_model'), 'model', 'new_car_model', 'Matching Model'),
-                      this.buildSection(_.get(response, 'results.new_car_variant'), 'variants', 'new_car_variant', 'New Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                      this.buildSection(_.get(sectionResponses, 'results[0]'), 'new_car', 'new_car', 'New Cars', this.sortNewCarResults),
+                      this.buildSection(_.get(sectionResponses, 'results[1]'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[2]'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results[3]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                     ));
               } else if (searchType === 'model-multi') {
                   // matching models
@@ -1779,12 +1965,12 @@ class SearcherInternal {
                       this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-                  ]))
+                  ], input))
                     .then(sectionResponses => this.composeSections(
-                      this.buildSection(_.get(response, 'results.new_car_model'), 'matching-models', 'new_car_model', 'Matching Models'),
-                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                      this.buildSection(_.get(response, 'results[1]'), 'new_car', 'new_car', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[0]'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[1]'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results[2]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                     ));
               } else if (searchType === 'variant-single') {
                   // matching single variant
@@ -1797,12 +1983,12 @@ class SearcherInternal {
                       this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
                       this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-                  ]))
+                  ], input))
                     .then(sectionResponses => this.composeSections(
-                      this.buildSection(_.get(response, 'results.new_car_variant'), 'variant', 'new_car_variant', 'Matching Variant'),
-                      this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                      this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                      this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                      this.buildSection(_.get(response, 'results[2]'), 'new_car', 'new_car', 'New Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[0]'), 'used-cars', 'used_car', 'Used Cars'),
+                      this.buildSection(_.get(sectionResponses, 'results[1]'), 'news', 'car_news', 'News'),
+                      this.buildSection(_.get(sectionResponses, 'results[2]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                     ));
               } //else /*if (searchType === 'variant-multi')*/ {
               // matching variants
@@ -1814,12 +2000,12 @@ class SearcherInternal {
                   this.searchUsedCarsByIntentSuggestions(intentSuggestions, 'model'),
                   this.searchNewsByIntentSuggestions(intentSuggestions, 'model'),
                   this.searchNewCarDealersByIntentSuggestions(intentSuggestions, 'brand')
-              ]))
+              ], input))
                 .then(sectionResponses => this.composeSections(
-                  this.buildSection(_.get(response, 'results.new_car_variant'), 'matching-variants', 'new_car_variant', 'Matching Variants'),
-                  this.buildSection(_.get(sectionResponses, 'results.used_car'), 'used-cars', 'used_car', 'Used Cars'),
-                  this.buildSection(_.get(sectionResponses, 'results.car_news'), 'news', 'car_news', 'News'),
-                  this.buildSection(_.get(sectionResponses, 'results.new_car_dealer'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
+                  this.buildSection(_.get(response, 'results[2]'), 'new_car', 'new_car', 'New Cars'),
+                  this.buildSection(_.get(sectionResponses, 'results[0]'), 'used-cars', 'used_car', 'Used Cars'),
+                  this.buildSection(_.get(sectionResponses, 'results[1]'), 'news', 'car_news', 'News'),
+                  this.buildSection(_.get(sectionResponses, 'results[2]'), 'new-car-dealers', 'new_car_dealer', 'New Car Dealers')
                 ));
               //}
           });
@@ -1828,18 +2014,26 @@ class SearcherInternal {
     search(headers, input) {
         const validatedInput = this.validateInput(input, this.apiSchema.search);
 
-        if (this.instanceName === 'carDekho' && (!validatedInput.type || validatedInput.type === '*')) {
-            return Promise.resolve(this._intentInternal(headers, input, this.searchConfig.search))
+        if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && validatedInput.section === 'new_car_dealer') {
+            return this.searchNewCarDealers(headers, validatedInput, this.searchConfig.search);
+        } else if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && validatedInput.section === 'car_news') {
+            return this.searchCarNews(headers, validatedInput, this.searchConfig.search);
+        } else if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && validatedInput.section === 'used_car') {
+            return this.searchUsedCars(headers, validatedInput, this.searchConfig.search);
+        } else if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && validatedInput.section === 'new_car') {
+            return this.searchNewCars(headers, validatedInput, this.searchConfig.search);
+        } else if ((this.instanceName === 'carDekho' || this.instanceName === 'carDekhoV2') && (!validatedInput.type || validatedInput.type === '*')) {
+            return Promise.resolve(this._intentInternal(headers, validatedInput, this.searchConfig.search))
               .then((response) => {
                   if (_.isEmpty(response.results)) {
-                      return this.formatMultiResponseIntoSections(this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT));
+                      return this.searchWithoutIntent(headers, validatedInput, this.searchConfig.search);
                   }
 
                   // get the first result for now
                   const intentResult = _.first(response.results);
                   const intentSuggestions = _.get(intentResult, ['intent_classes', 'car_name']);
                   if (!intentSuggestions || _.isEmpty(intentSuggestions)) {
-                      return this.formatMultiResponseIntoSections(this._searchInternal(headers, validatedInput, this.searchConfig.search, Constants.SEARCH_EVENT));
+                      return this.searchWithoutIntent(headers, validatedInput, this.searchConfig.search);
                   }
 
                   // make a query for brand, model, or variant
@@ -2029,8 +2223,6 @@ class SearcherInternal {
             totalResults: 0,
             results: []
         };
-
-        // console.log('=======> View: ', JSON.stringify(indexTypeConfig));
 
         return this.esClient.allPages(indexTypeConfig.index, indexTypeConfig.type, query, 100,
           (response) => {
