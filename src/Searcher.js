@@ -241,8 +241,8 @@ class SearcherInternal {
         return {
             humane_query: {
                 [fieldConfig.field]: {
-                    // instance: this.instanceName, // new
-                    intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
+                    instance: this.instanceName, // new
+                    // intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                     intentFields,
                     query: text,
                     boost: fieldConfig.weight,
@@ -414,8 +414,8 @@ class SearcherInternal {
                             vernacularOnly: queryField.vernacularOnly,
                             noFuzzy: !fuzzySearch || queryField.noFuzzy,
                             keyword: queryField.keyword,
-                            // instance: this.instanceName, // new
-                            intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
+                            instance: this.instanceName, // new
+                            // intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                             intentFields
                         }
                     }
@@ -426,8 +426,8 @@ class SearcherInternal {
             query: {
                 multi_humane_query: {
                     query: text,
-                    // instance: this.instanceName, // new
-                    intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
+                    instance: this.instanceName, // new
+                    // intentIndex: `${_.toLower(this.instanceName)}:intent_store`, // old
                     intentFields,
                     fields: _(queryFields)
                       .map(queryField => ({
@@ -1522,8 +1522,8 @@ class SearcherInternal {
     //      regexEntities - todo later
     //      query
     _intentInternal(headers, input, searchApiConfig) {
-        const intentIndex = `${_.toLower(this.instanceName)}:intent_store`; // old
-        // const intentIndex = `${_.toLower(this.instanceName)}:metadata_store`; // new
+        // const intentIndex = `${_.toLower(this.instanceName)}:intent_store`; // old
+        const intentIndex = `${_.toLower(this.instanceName)}:metadata_store`; // new
         const query = input.text;
 
         const searchTypeConfigs = searchApiConfig.types;
